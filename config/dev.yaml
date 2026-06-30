@@ -1,0 +1,10 @@
+# Development environment overrides
+base_url: "https://httpbin.org"
+
+browser:
+  headless: false
+  timeout: 15000
+
+retry:
+  max_attempts: 2
+  delay_seconds: 0.5

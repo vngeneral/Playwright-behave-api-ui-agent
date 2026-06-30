@@ -1,0 +1,65 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+exclude = [
+    ".git", "__pycache__", ".venv", "venv",
+    "reports", "test_data",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+]
+ignore = [
+    "E501",   # line too long (covered by line-length above)
+    "B008",   # function calls in default args (common in argparse)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "ai", "helpers", "monitoring", "pages", "plugins", "steps", "utils",
+]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_return_any = false
+check_untyped_defs = true
+exclude = ["reports/", "test_data/", ".venv/"]
+
+[tool.pytest.ini_options]
+# pytest is not used (framework uses Behave), but keep this for IDE compatibility
+testpaths = ["features"]
+
+[project]
+name = "playwright-behave-allure-ai-driven-framework"
+version = "1.0.0"
+description = "AI-driven E2E test framework: Playwright + Behave + Allure"
+requires-python = ">=3.12"
+dependencies = [
+    "playwright~=1.53.0",
+    "behave~=1.2.6",
+    "allure-behave",
+    "requests~=2.32.4",
+    "psutil~=7.0.0",
+    "pyyaml~=6.0.2",
+    "jsonschema~=4.23.0",
+    "ollama",
+    "tenacity~=9.1.2",
+    "flask~=3.1.0",
+    "python-dotenv~=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "mypy",
+    "types-requests",
+    "types-PyYAML",
+]

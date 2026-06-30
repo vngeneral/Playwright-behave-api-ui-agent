@@ -1,0 +1,110 @@
+###############################################################################
+# GitLab CI — Playwright + Behave + Allure
+###############################################################################
+# Stages run in order; each stage blocks the next on failure.
+# Allure results from each matrix job are merged in the 'report' stage.
+###############################################################################
+
+stages:
+  - lint
+  - test
+  - report
+
+variables:
+  HEADLESS: "True"
+  ENV: "dev"
+  NOTIFY_ON_FAILURE: "true"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip_cache"
+  # Notification secrets — set in GitLab → Settings → CI/CD → Variables (masked)
+  # SLACK_WEBHOOK_URL, TEAMS_WEBHOOK_URL, WHATSAPP_API_TOKEN,
+  # WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_NOTIFY_TO
+
+cache:
+  key: "$CI_COMMIT_REF_SLUG"
+  paths:
+    - .pip_cache/
+
+# ── Lint ─────────────────────────────────────────────────────────────────────
+lint:
+  stage: lint
+  image: python:3.12-slim
+  before_script:
+    - pip install ruff --quiet
+  script:
+    - ruff check . --output-format=gitlab
+  allow_failure: false
+
+# ── Test matrix ───────────────────────────────────────────────────────────────
+.test_base: &test_base
+  stage: test
+  image: mcr.microsoft.com/playwright/python:v1.53.0-jammy
+  before_script:
+    - pip install -r resources/requirements.txt --quiet
+    - playwright install $BROWSER
+  script:
+    - |
+      TAG_ARGS=""
+      if [ -n "$TAGS" ]; then
+        for tag in $TAGS; do
+          TAG_ARGS="$TAG_ARGS --tags $tag"
+        done
+      fi
+      python run_tests.py \
+        --headless \
+        --browser $BROWSER \
+        --env $ENV \
+        --parallel \
+        --workers 2 \
+        $TAG_ARGS
+  artifacts:
+    when: always
+    paths:
+      - reports/allure-results/
+      - reports/screenshots/
+      - reports/metrics/
+    expire_in: 7 days
+  interruptible: true
+
+test:chromium:
+  <<: *test_base
+  variables:
+    BROWSER: chromium
+
+test:firefox:
+  <<: *test_base
+  variables:
+    BROWSER: firefox
+
+# ── Report ────────────────────────────────────────────────────────────────────
+report:
+  stage: report
+  image: python:3.12-slim
+  needs:
+    - test:chromium
+    - test:firefox
+  when: always
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq default-jre-headless wget
+    - |
+      wget -q https://github.com/allure-framework/allure2/releases/download/2.27.0/allure-2.27.0.tgz
+      tar -xzf allure-2.27.0.tgz -C /opt
+      ln -s /opt/allure-2.27.0/bin/allure /usr/local/bin/allure
+  script:
+    - allure generate reports/allure-results --clean -o reports/allure-html
+  artifacts:
+    paths:
+      - reports/allure-html/
+    expire_in: 30 days
+
+# Optional: publish to GitLab Pages
+pages:
+  stage: report
+  needs: [report]
+  when: on_success
+  only:
+    - main
+  script:
+    - mv reports/allure-html public
+  artifacts:
+    paths:
+      - public

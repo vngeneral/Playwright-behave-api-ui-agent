@@ -1,0 +1,10 @@
+# Staging environment overrides
+base_url: "https://httpbin.org"
+
+browser:
+  headless: true
+  timeout: 20000
+
+retry:
+  max_attempts: 3
+  delay_seconds: 1.0

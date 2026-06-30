@@ -1,0 +1,36 @@
+[
+  {
+    "name": "AI Selector Failures",
+    "matchedStatuses": ["broken", "failed"],
+    "messageRegex": ".*TimeoutError.*locator.*"
+  },
+  {
+    "name": "API Failures",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*Expected HTTP.*got.*|.*ProxyError.*|.*ConnectionError.*"
+  },
+  {
+    "name": "Performance Threshold Breaches",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*exceeds threshold.*|.*memory grew.*"
+  },
+  {
+    "name": "Assertion Errors",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*AssertionError.*"
+  },
+  {
+    "name": "Infrastructure / Setup Failures",
+    "matchedStatuses": ["broken"],
+    "messageRegex": ".*browser.*not found.*|.*playwright.*|.*ConfigValidationError.*"
+  },
+  {
+    "name": "Skipped Tests",
+    "matchedStatuses": ["skipped"]
+  },
+  {
+    "name": "Product Defects",
+    "matchedStatuses": ["failed"],
+    "flaky": false
+  }
+]

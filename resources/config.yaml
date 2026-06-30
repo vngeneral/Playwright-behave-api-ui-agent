@@ -1,0 +1,73 @@
+# ─────────────────────────────────────────────────────────────
+# Framework Configuration
+# Override any key via environment variable: ENV, BROWSER, etc.
+# NEVER put secrets (passwords, webhook URLs, tokens) here.
+# ─────────────────────────────────────────────────────────────
+
+# Active environment (overridden by ENV env-var)
+environment: "dev"
+
+# AI model for selector healing + test generation (requires Ollama)
+ai_model: "devstral:24b"
+
+# ── Browser ──────────────────────────────────────────────────
+# These are DEFAULTS. CLI flags (--browser, --headless) always win.
+browser:
+  default: "chromium"       # chromium | firefox | webkit
+  headless: false
+  timeout_ms: 10000         # default element wait
+  navigation_timeout_ms: 30000
+
+# ── Environments ─────────────────────────────────────────────
+environments:
+  dev:
+    base_url: "https://httpbin.org"
+  staging:
+    base_url: "https://httpbin.org"
+  prod:
+    base_url: "https://httpbin.org"
+
+# ── Timeouts (ms) ────────────────────────────────────────────
+timeouts:
+  default: 10000
+  navigation: 30000
+  network_idle: 15000
+  page_load_threshold_s: 3.0   # assertion limit for performance tests
+
+# ── Retry ────────────────────────────────────────────────────
+retry:
+  max_attempts: 3
+  delay_seconds: 1.0
+  backoff_multiplier: 1.5      # multiply delay after each failed attempt
+
+# ── Parallel execution ───────────────────────────────────────
+parallel:
+  default_workers: 4
+  # Tags run in this order when --priority is used
+  priority_tags:
+    - "smoke"
+    - "regression"
+    - "api"
+    - "performance"
+    - "ai_healing"
+
+# ── Reporting ────────────────────────────────────────────────
+reporting:
+  screenshots_on_failure: true
+  attach_page_source: false
+  metrics_enabled: true
+  categories_file: "allure_categories.json"
+
+# ── Notifications ─────────────────────────────────────────────
+# Webhook URLs / recipients are read from env vars — never hardcoded.
+notifications:
+  slack_enabled: false
+  slack_webhook_env_var: "SLACK_WEBHOOK_URL"   # export this in CI
+  notify_on_failure_only: true
+
+# ── Test Data ────────────────────────────────────────────────
+test_data:
+  users_file: "test_data/users.json"
+  form_data_file: "test_data/form_data.json"
+  api_scenarios_file: "test_data/api_scenarios.json"
+  cleanup_after_run: false     # set true if tests write to a real DB

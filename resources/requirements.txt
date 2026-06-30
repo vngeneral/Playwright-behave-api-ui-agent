@@ -1,0 +1,11 @@
+playwright~=1.53.0
+behave~=1.2.6
+allure-behave
+requests~=2.32.4
+psutil~=7.0.0
+pyyaml~=6.0.2
+jsonschema~=4.23.0
+ollama
+tenacity~=9.1.2
+flask~=3.1.0
+python-dotenv~=1.0.0

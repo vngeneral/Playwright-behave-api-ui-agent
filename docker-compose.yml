@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  # ── Test runner ──────────────────────────────────────────────────────────
+  test-runner:
+    build:
+      context: .
+      target: runtime
+    image: playwright-behave-framework:latest
+    environment:
+      HEADLESS: "True"
+      BROWSER: "${BROWSER:-chromium}"
+      ENV: "${ENV:-dev}"
+    volumes:
+      - ./reports:/app/reports          # persist reports to host
+      - ./features:/app/features        # mount features so you can edit without rebuild
+    command: >
+      python run_tests.py
+        --headless
+        --parallel
+        --workers ${WORKERS:-4}
+        ${TAGS:+--tags ${TAGS}}
+    networks:
+      - qa-net
+
+  # ── Allure report server ─────────────────────────────────────────────────
+  allure-reporter:
+    image: frankescobar/allure-docker-service:latest
+    environment:
+      CHECK_RESULTS_EVERY_SECONDS: "10"
+      KEEP_HISTORY: "20"
+    volumes:
+      - ./reports/allure-results:/app/allure-results
+      - ./reports/allure-report:/app/default-reports
+    ports:
+      - "5050:5050"
+    networks:
+      - qa-net
+    depends_on:
+      - test-runner
+
+networks:
+  qa-net:
+    driver: bridge
