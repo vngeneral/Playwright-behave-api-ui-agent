@@ -3,26 +3,35 @@ AI Selector Healer
 ==================
 When a Playwright selector fails, this module:
   1. Takes a screenshot + grabs HTML from the live page
-  2. Sends both to a local Ollama vision model
+  2. Sends both to a cloud LLM via LLMClient (Anthropic Claude or OpenAI)
   3. Parses the suggested selector from the JSON response
   4. Validates the selector against the live DOM
   5. Persists successful mappings in reports/ai/selector_map.json
+
+Provider configuration (env vars):
+    AI_PROVIDER   — anthropic | openai | stub  (default: anthropic)
+    AI_API_KEY    — API key for the selected provider
+    AI_MODEL      — model override (e.g. claude-3-5-sonnet-20241022)
+
+To keep using Ollama locally set:
+    AI_PROVIDER=openai
+    AI_BASE_URL=http://localhost:11434/v1
+    AI_API_KEY=ollama
+    AI_MODEL=devstral:24b
 """
 from __future__ import annotations
 
 import json
-import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-import ollama
 from behave.runner import Context
 from playwright.sync_api import Page
 
+from ai.llm_client import LLMClient
 from helpers.constants.framework_constants import SCREENSHOTS_DIR, AI_ARTIFACTS_DIR
 from utils.logger import log_info_emoji, log_error, log_warning
-from utils.misc import load_config
 
 
 # ---------------------------------------------------------------------------
@@ -49,11 +58,10 @@ def _dump_json(path: str, data):
 # ---------------------------------------------------------------------------
 
 class AISelectorHealer:
-    """Self-healing selector engine backed by a local Ollama vision model."""
+    """Self-healing selector engine backed by a cloud LLM (Anthropic / OpenAI)."""
 
     def __init__(self):
-        cfg = load_config()
-        self.model: str = cfg.get("ai_model", "devstral:24b")
+        self._client = LLMClient.from_config()
         self.selector_map_file = str(Path(AI_ARTIFACTS_DIR) / "selector_map.json")
         self.log_file = str(Path(AI_ARTIFACTS_DIR) / "selector_log.json")
         self.selector_map: dict = _load_json(self.selector_map_file)
@@ -86,8 +94,13 @@ class AISelectorHealer:
         html_snippet = context.page.content()[:8000]
 
         prompt = self._build_prompt(html_snippet, exception, context, original_selector)
-        log_info_emoji("🧠", f"Querying AI model '{self.model}' for selector healing …")
-        ai_response = self._query_ai(prompt, screenshot_path)
+        log_info_emoji("🧠", f"Querying AI ({self._client.provider_name}) for selector healing …")
+        ai_response = self._client.generate(
+            prompt=prompt,
+            system="You are an expert QA automation engineer. Return only valid JSON.",
+            images=[screenshot_path],
+            temperature=0.1,
+        )
         log_info_emoji("🤖", f"AI Response:\n{ai_response}")
 
         selector, confidence, selector_type, identifier = extract_selector_and_confidence(ai_response)
@@ -103,6 +116,7 @@ class AISelectorHealer:
             "confidence": confidence,
             "selector_type": selector_type,
             "valid": False,
+            "provider": self._client.provider_name,
         }
 
         if selector:
@@ -120,10 +134,13 @@ class AISelectorHealer:
         return selector or ""
 
     def stop_model(self):
-        """Unload the Ollama model to free GPU memory."""
-        res = ollama.generate(model=self.model, stream=False, keep_alive=0)
-        if str(res.done_reason) == "unload":
-            log_info_emoji("🧠", f"AI model unloaded: {self.model}")
+        """
+        Release AI resources.
+
+        For cloud providers this is a no-op.
+        Previously unloaded the Ollama GPU model; kept for API compatibility.
+        """
+        log_info_emoji("🧠", f"AI client ({self._client.provider_name}) released")
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -154,17 +171,6 @@ Tasks:
   "selector_type": "xpath"
 }}
 """
-
-    def _query_ai(self, prompt: str, screenshot_path: str) -> str:
-        response = ollama.generate(
-            model=self.model,
-            prompt=prompt,
-            images=[screenshot_path],
-            stream=False,
-            system="You are an expert QA automation engineer. Return only valid JSON.",
-            options={"temperature": 0.1},
-        )
-        return response.response
 
     def _update_selector_map(self, key: str, selector: str):
         self.selector_map[key] = selector

@@ -12,6 +12,11 @@ Implements a four-agent architecture for fully autonomous QA:
   │             │     │ LLM         │     │             │     │ fixes       │
   └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
 
+Provider configuration (env vars):
+    AI_PROVIDER   — anthropic | openai | stub  (default: anthropic)
+    AI_API_KEY    — API key for the selected provider
+    AI_MODEL      — model override
+
 Usage:
     python -m ai.multi_agent \\
         --url https://httpbin.org/forms/post \\
@@ -25,7 +30,9 @@ composable and easy to extend.
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -33,12 +40,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import ollama
-
+from ai.llm_client import LLMClient, BaseLLMClient
 from ai.test_generator import AITestGenerator
 from helpers.constants.framework_constants import ALLURE_RESULTS_DIR
 from utils.logger import log_info_emoji, log_failure, log_success, log_warning
-from utils.misc import load_config
 
 
 # ---------------------------------------------------------------------------
@@ -76,20 +81,20 @@ class PipelineContext:
 class BaseAgent:
     name: str = "BaseAgent"
 
+    def __init__(self, client: BaseLLMClient | None = None) -> None:
+        # Allow injection for testing; default to shared config-driven client
+        self._llm_client: BaseLLMClient = client or LLMClient.from_config()
+
     def run(self, ctx: PipelineContext) -> PipelineContext:
         raise NotImplementedError
 
-    def _llm(self, prompt: str, system: str = "") -> str:
-        cfg = load_config()
-        model = cfg.get("ai_model", "devstral:24b")
-        response = ollama.generate(
-            model=model,
+    def _llm(self, prompt: str, system: str = "", temperature: float = 0.15) -> str:
+        """Call the configured LLM and return the response text."""
+        return self._llm_client.generate(
             prompt=prompt,
             system=system,
-            stream=False,
-            options={"temperature": 0.15},
+            temperature=temperature,
         )
-        return response.response.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +124,6 @@ class PlannerAgent(BaseAgent):
 
         try:
             raw = self._llm(f"URL: {ctx.target_url}", system=system)
-            import json, re
             m = re.search(r'\{.*\}', raw, re.DOTALL)
             plan = json.loads(m.group(0)) if m else {}
         except Exception as exc:
@@ -163,6 +167,7 @@ class GeneratorAgent(BaseAgent):
 class ExecutorAgent(BaseAgent):
     """
     Runs `behave` on the generated feature file and captures results.
+    Does not call the LLM — no __init__ override needed.
     """
     name = "Executor"
 
@@ -231,7 +236,6 @@ class ValidatorAgent(BaseAgent):
 
         try:
             raw = self._llm(prompt, system=system)
-            import json, re
             m = re.search(r'\{.*\}', raw, re.DOTALL)
             report = json.loads(m.group(0)) if m else {}
         except Exception as exc:

@@ -5,7 +5,9 @@ requests~=2.32.4
 psutil~=7.0.0
 pyyaml~=6.0.2
 jsonschema~=4.23.0
-ollama
+# AI providers — install the one matching AI_PROVIDER env var
+anthropic>=0.40.0          # AI_PROVIDER=anthropic (default, used by OpenCode.ai Zen)
+openai>=1.50.0             # AI_PROVIDER=openai (also covers Ollama, Groq, Azure)
 tenacity~=9.1.2
 flask~=3.1.0
 python-dotenv~=1.0.0

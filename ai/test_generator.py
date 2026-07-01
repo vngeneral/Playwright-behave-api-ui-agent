@@ -4,8 +4,13 @@ AI Test Generator
 Generates Gherkin BDD scenarios from a live page by:
   1. Navigating to a URL with Playwright (headless)
   2. Extracting semantic HTML + visible text
-  3. Sending to Ollama with a structured prompt
+  3. Sending to a cloud LLM via LLMClient (Anthropic Claude or OpenAI)
   4. Parsing the returned Gherkin and writing a .feature file
+
+Provider configuration (env vars):
+    AI_PROVIDER   — anthropic | openai | stub  (default: anthropic)
+    AI_API_KEY    — API key for the selected provider
+    AI_MODEL      — model override
 
 Usage (standalone CLI):
     python -m ai.test_generator \\
@@ -22,16 +27,14 @@ Usage (programmatic):
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import textwrap
 from pathlib import Path
 
-import ollama
 from playwright.sync_api import sync_playwright
 
+from ai.llm_client import LLMClient
 from utils.logger import log_info_emoji, log_failure, log_success
-from utils.misc import load_config
 
 _SYSTEM_PROMPT = textwrap.dedent("""
     You are a senior QA automation engineer who writes Gherkin BDD feature files.
@@ -47,11 +50,10 @@ _SYSTEM_PROMPT = textwrap.dedent("""
 
 
 class AITestGenerator:
-    """Generates Gherkin feature files from live pages using an LLM."""
+    """Generates Gherkin feature files from live pages using a cloud LLM."""
 
-    def __init__(self, model: str | None = None):
-        cfg = load_config()
-        self.model = model or cfg.get("ai_model", "devstral:24b")
+    def __init__(self):
+        self._client = LLMClient.from_config()
 
     # ------------------------------------------------------------------
     # Public API
@@ -69,8 +71,13 @@ class AITestGenerator:
         cleaned = self._clean_html(html)
 
         prompt = self._build_prompt(url, cleaned, tag_line)
-        log_info_emoji("🧠", f"Generating scenarios with model '{self.model}' …")
-        gherkin = self._call_llm(prompt)
+        log_info_emoji("🧠", f"Generating scenarios via {self._client.provider_name} …")
+        gherkin = self._client.generate(
+            prompt=prompt,
+            system=_SYSTEM_PROMPT,
+            temperature=0.2,
+        )
+        gherkin = gherkin.strip()
 
         # Ensure the output starts with a Feature: line
         if not re.search(r"^\s*Feature:", gherkin, re.MULTILINE):
@@ -124,16 +131,6 @@ class AITestGenerator:
             "Generate a complete Gherkin feature file for the page above."
         )
 
-    def _call_llm(self, prompt: str) -> str:
-        response = ollama.generate(
-            model=self.model,
-            prompt=prompt,
-            system=_SYSTEM_PROMPT,
-            stream=False,
-            options={"temperature": 0.2},
-        )
-        return response.response.strip()
-
     @staticmethod
     def _count_scenarios(gherkin: str) -> int:
         return len(re.findall(r"^\s*Scenario", gherkin, re.MULTILINE))
@@ -150,14 +147,13 @@ def _parse_args():
                    help="Output .feature file path")
     p.add_argument("--tags", nargs="*", default=["ai_generated", "smoke"],
                    help="Tags to apply to all generated scenarios")
-    p.add_argument("--model", default=None, help="Ollama model override")
     return p.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
     try:
-        gen = AITestGenerator(model=args.model)
+        gen = AITestGenerator()
         gherkin = gen.generate(url=args.url, tags=args.tags)
         gen.save(gherkin, args.feature)
     except Exception as exc:

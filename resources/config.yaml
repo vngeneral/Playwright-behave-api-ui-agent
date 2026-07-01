@@ -7,8 +7,16 @@
 # Active environment (overridden by ENV env-var)
 environment: "dev"
 
-# AI model for selector healing + test generation (requires Ollama)
-ai_model: "devstral:24b"
+# ── AI provider (selector healing + test generation) ─────────
+# Provider selection: anthropic | openai | stub
+# Override with AI_PROVIDER env var.
+ai_provider: "anthropic"
+
+# Model name — overridden by AI_MODEL env var.
+# Anthropic defaults: claude-3-5-haiku-20241022 (fast) or claude-3-5-sonnet-20241022 (vision)
+# OpenAI defaults:    gpt-4o (vision) or gpt-4o-mini (fast)
+# Ollama (openai compat): devstral:24b, llama3.2-vision, etc.
+ai_model: "claude-3-5-haiku-20241022"
 
 # ── Browser ──────────────────────────────────────────────────
 # These are DEFAULTS. CLI flags (--browser, --headless) always win.
