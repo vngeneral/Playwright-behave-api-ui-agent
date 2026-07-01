@@ -1,13 +1,20 @@
 name: Playwright + Behave CI
 
+# ── Triggers ─────────────────────────────────────────────────────────────────
+# Push / PR / schedule triggers are intentionally DISABLED.
+# Re-enable them (uncomment) once the CI environment is fully configured:
+#   - Playwright browsers installable in the runner
+#   - VEHICLE_API_KEY, TEAMS_WEBHOOK_URL, etc. set as repo secrets
+#
+# on:
+#   push:
+#     branches: [main, develop]
+#   pull_request:
+#     branches: [main]
+#   schedule:
+#     - cron: "0 2 * * *"   # nightly smoke run at 02:00 UTC
+
 on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main]
-  schedule:
-    # Nightly smoke run at 02:00 UTC
-    - cron: "0 2 * * *"
   workflow_dispatch:
     inputs:
       tags:

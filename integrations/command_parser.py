@@ -15,6 +15,10 @@ Command syntax:
     !run --tags @smoke --browser chromium --headless --env dev
     !status                                  — show last run metrics
     !help                                    — command reference
+    !testrail status                         — show pending TestRail queue
+    !testrail preview                        — show full pending result details
+    !testrail push [--run-id N] [--case N]   — push results to TestRail
+    !testrail discard                        — discard pending queue
 
 Returns None for any message that is not a recognised command.
 """
@@ -41,6 +45,14 @@ HELP_TEXT = """\
 
 Multiple flags may be combined:
 `!run --tags @smoke --browser chromium --headless --env staging`
+
+*TestRail review commands:*
+`!testrail status`              — pending queue count
+`!testrail preview`             — full pending result details
+`!testrail push`                — push all pending to TestRail
+`!testrail push --run-id N`     — push to a specific run
+`!testrail push --case N`       — push a single case
+`!testrail discard`             — discard pending queue
 """
 
 # ---------------------------------------------------------------------------
@@ -83,6 +95,11 @@ def parse_command(text: str) -> dict | None:
 
     if command == "!run":
         return _parse_run_args(parts[1:])
+
+    if command == "!testrail":
+        # Pass through — handled directly in webhook_server via testrail_command
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        return {"action": "testrail", "subcommand": sub, "raw": text}
 
     # Unknown command — treat as non-command so the server ignores it gracefully
     return None

@@ -22,10 +22,13 @@ browser:
 environments:
   dev:
     base_url: "https://httpbin.org"
+    vehicle_api_url: "https://stage.bl4b.api.sample.com"   # override via VEHICLE_API_BASE_URL env var
   staging:
     base_url: "https://httpbin.org"
+    vehicle_api_url: "https://stage.bl4b.api.sample.com"
   prod:
     base_url: "https://httpbin.org"
+    vehicle_api_url: "https://prod.bl4b.api.sample.com"
 
 # ── Timeouts (ms) ────────────────────────────────────────────
 timeouts:
@@ -70,4 +73,13 @@ test_data:
   users_file: "test_data/users.json"
   form_data_file: "test_data/form_data.json"
   api_scenarios_file: "test_data/api_scenarios.json"
+  vehicle_api_file: "test_data/vehicle_api.json"
   cleanup_after_run: false     # set true if tests write to a real DB
+
+# ── Vehicle API ───────────────────────────────────────────────
+# API key is read from VEHICLE_API_KEY env var — never stored here.
+vehicle_api:
+  partner_code: "HBL4BP-006"
+  request_timeout_s: 30
+  register_path: "bl4b/v1/vehicle/register"
+  deregister_path: "bl4b/v1/vehicle/deregister"

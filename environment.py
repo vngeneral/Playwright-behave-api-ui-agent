@@ -31,6 +31,8 @@ from utils.config_validator import validate_config
 from utils.logger import log_failure, log_info_emoji, log_warning
 from utils.misc import load_config, get_active_env
 from utils.reporting import attach_screenshot
+from utils.testrail.result_mapper import from_behave_scenario, extract_case_ids
+from utils.testrail.pending_store import get_default_store
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +41,7 @@ from utils.reporting import attach_screenshot
 _metrics = MetricsCollector()
 _perf = PerformancePlugin()
 _notifier = UnifiedNotifier()   # Slack + Teams + WhatsApp
+_testrail_store = get_default_store()  # review queue for !testrail push
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +98,23 @@ def after_scenario(context, scenario):
         log_failure(f"Scenario FAILED: {scenario.name}")
     else:
         log_info_emoji("✅", f"Scenario PASSED: {scenario.name}")
+
+    # ── TestRail pending queue ─────────────────────────────────────────────
+    # If scenario has @testrail_C<id> tags, queue results for human review.
+    # Results are NOT pushed automatically — use `!testrail push` to submit.
+    case_ids = extract_case_ids(scenario)
+    if case_ids:
+        for case_id in case_ids:
+            try:
+                result = from_behave_scenario(scenario, case_id)
+                _testrail_store.add(result)
+                log_info_emoji(
+                    "📋",
+                    f"TestRail C{case_id} queued for review "
+                    f"({'passed' if result.status_id == 1 else 'failed'})"
+                )
+            except Exception as exc:
+                log_warning(f"TestRail queue error for C{case_id}: {exc}")
 
     # Always close the page so cookies / storage don't leak between scenarios
     context.browser_manager.close_page()

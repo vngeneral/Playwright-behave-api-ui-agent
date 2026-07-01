@@ -60,6 +60,7 @@ from integrations.command_parser import (
     parse_command,
 )
 from integrations.teams import TeamsClient
+from integrations.testrail_command import handle_testrail_command
 from integrations.whatsapp import WhatsAppClient
 from utils.logger import log_info_emoji, log_warning, log_failure
 
@@ -134,6 +135,10 @@ def create_app() -> Flask:
             _run_tests_async(argv, _last_run, _lock, notify_teams=teams)
             return jsonify({"type": "message", "text": ack}), 200
 
+        if cmd["action"] == "testrail":
+            response_text = handle_testrail_command(cmd["raw"])
+            return jsonify({"type": "message", "text": response_text}), 200
+
         return jsonify({"type": "message", "text": "❓ Unknown command."}), 200
 
     # -----------------------------------------------------------------------
@@ -194,6 +199,12 @@ def create_app() -> Flask:
                 ack  = f"🚀 Test run started\n`python run_tests.py {' '.join(argv)}`"
                 whatsapp.send_text(sender, ack)
                 _run_tests_async(argv, _last_run, _lock, notify_whatsapp=whatsapp, reply_to=sender)
+                continue
+
+            if cmd["action"] == "testrail":
+                response_text = handle_testrail_command(cmd["raw"])
+                whatsapp.send_text(sender, response_text)
+                continue
 
         # Meta always expects 200 OK immediately
         return jsonify({"status": "ok"}), 200

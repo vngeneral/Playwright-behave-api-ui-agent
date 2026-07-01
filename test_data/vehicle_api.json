@@ -1,0 +1,96 @@
+{
+  "_comment": "Vehicle Registration API test data. VINs are ISO 3779 (17 chars, no I/O/Q).",
+
+  "partner": {
+    "code": "HBL4BP-006",
+    "invalid_code": "INVALID-CODE"
+  },
+
+  "vins": {
+    "register": {
+      "single":  "KMUHCESC7RU179347",
+      "batch": [
+        "KMUHCESC7RU179347",
+        "KM8JFCA14PU000001",
+        "KM8J3CA46MU283910"
+      ]
+    },
+    "deregister": {
+      "single":  "KM8JFDA25PU103343",
+      "batch": [
+        "KM8JFDA25PU103343",
+        "KM8J3CA46MU283910"
+      ]
+    },
+    "invalid_format": [
+      "TOOSHORT",
+      "TOO_LONG_VIN_12345678901",
+      "HAS_ILLEGAL_CHAR_I0Q12",
+      ""
+    ],
+    "edge_cases": {
+      "single_char_vin": "A",
+      "spaces_in_vin": "KMUHCESC 7RU179347",
+      "lowercase_vin": "kmuhcesc7ru179347"
+    }
+  },
+
+  "scenarios": {
+    "register_single": {
+      "description": "Register one valid VIN",
+      "partner_code": "HBL4BP-006",
+      "vin_list": ["KMUHCESC7RU179347"],
+      "expected_status": 200
+    },
+    "register_batch": {
+      "description": "Register multiple VINs in one request",
+      "partner_code": "HBL4BP-006",
+      "vin_list": [
+        "KMUHCESC7RU179347",
+        "KM8JFCA14PU000001",
+        "KM8J3CA46MU283910"
+      ],
+      "expected_status": 200
+    },
+    "deregister_single": {
+      "description": "Deregister one VIN",
+      "partner_code": "HBL4BP-006",
+      "vin_list": ["KM8JFDA25PU103343"],
+      "expected_status": 200
+    },
+    "deregister_batch": {
+      "description": "Deregister multiple VINs",
+      "partner_code": "HBL4BP-006",
+      "vin_list": [
+        "KM8JFDA25PU103343",
+        "KM8J3CA46MU283910"
+      ],
+      "expected_status": 200
+    },
+    "invalid_api_key": {
+      "description": "Request with wrong API key should return 401 or 403",
+      "partner_code": "HBL4BP-006",
+      "vin_list": ["KMUHCESC7RU179347"],
+      "expected_statuses": [401, 403]
+    },
+    "missing_transaction_id": {
+      "description": "Omitting transactionId should return 400",
+      "missing_field": "transactionId",
+      "partner_code": "HBL4BP-006",
+      "vin_list": ["KMUHCESC7RU179347"],
+      "expected_status": 400
+    },
+    "missing_partner_code": {
+      "description": "Omitting partnerCode should return 400",
+      "missing_field": "partnerCode",
+      "vin_list": ["KMUHCESC7RU179347"],
+      "expected_status": 400
+    },
+    "empty_vin_list": {
+      "description": "Empty vinList should return 400",
+      "partner_code": "HBL4BP-006",
+      "vin_list": [],
+      "expected_status": 400
+    }
+  }
+}
