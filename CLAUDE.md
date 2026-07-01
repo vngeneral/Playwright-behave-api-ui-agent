@@ -17,23 +17,38 @@ An end-to-end test automation framework combining:
 
 ---
 
+## Repository layout — two-layer architecture
+
+The framework is split into two layers so the AI/integration engine can be maintained separately from the test scripts QA teams run day-to-day.
+
+```
+agent/       ← internal team only (AI, TestRail, integrations, monitoring)
+e2e/          ← QA team: features, steps, pages, plugins, utils/api, utils/browser
+utils/        ← SHARED: logger.py, misc.py (both layers import from here)
+helpers/      ← SHARED: framework_constants.py
+tests/        ← unit tests for agent/ (pytest)
+```
+
+**QA team** receives a copy of `e2e/` only — they run UI and API tests without needing the agent.  
+**Internal team** pushes changes to `agent/` to the shared repository.
+
+When `agent/` is absent the `e2e/environment.py` gracefully degrades:
+AI healing, TestRail queuing, and notifications become no-ops; tests still run.
+
+---
+
 ## How to run tests
 
 ```bash
-# All tests (default env=dev, browser=chromium, headless=false)
+# From the e2e/ directory (recommended for QA team)
+cd e2e
 python run_tests.py
-
-# With options
 python run_tests.py --tags @smoke --browser firefox --env staging --headless
-
-# Priority ordering (smoke → regression → api → performance)
-python run_tests.py --priority
-
-# Parallel workers
+python run_tests.py --priority     # smoke → regression → api → performance
 python run_tests.py --parallel --tags @api
 
-# API-only (no browser needed)
-python run_tests.py --tags @api
+# From repo root (both layers present)
+python e2e/run_tests.py --tags @smoke
 ```
 
 Generate the Allure report after a run:
@@ -62,54 +77,79 @@ Current test counts: 47 (vehicle API) + 71 (TestRail) + others = ~150+ total, al
 ## Project structure
 
 ```
-├── ai/                        # AI components
-│   ├── llm_client.py          # ← UNIFIED LLM ABSTRACTION (Anthropic / OpenAI)
-│   ├── selector_healer.py     # Self-healing selectors via LLMClient
-│   ├── test_generator.py      # Generate .feature files from live pages
-│   └── multi_agent.py         # 4-agent pipeline: Planner→Generator→Executor→Validator
-│
-├── features/                  # Gherkin feature files
-│   ├── vehicle_api.feature    # BL4B vehicle register/deregister (tagged @testrail_C*)
-│   └── *.feature
-│
-├── steps/                     # Behave step definitions (thin — logic in utils/)
-│   ├── vehicle_api_steps.py
-│   ├── ai_steps.py
-│   └── *.py
-│
-├── utils/
-│   ├── api/
-│   │   ├── base_client.py     # BaseAPIClient (requests.Session + retry + Allure attach)
-│   │   └── vehicle_client.py  # VehicleAPIClient — BL4B register/deregister
+├── agent/                    # ← INTERNAL TEAM ONLY — AI/integrations layer
+│   ├── __init__.py
+│   ├── ai/
+│   │   ├── llm_client.py      # Unified LLM abstraction (Anthropic / OpenAI / Stub)
+│   │   ├── selector_healer.py # Self-healing selectors via LLMClient
+│   │   ├── test_generator.py  # Generate .feature files from live pages
+│   │   └── multi_agent.py     # 4-agent pipeline: Planner→Generator→Executor→Validator
+│   ├── integrations/
+│   │   ├── command_parser.py  # Parse !run / !testrail / !status / !help
+│   │   ├── testrail_command.py# Handle !testrail status/preview/push/discard
+│   │   ├── webhook_server.py  # Flask: /teams/webhook, /whatsapp/webhook, /health
+│   │   ├── teams.py           # TeamsClient (Adaptive Card via Power Automate)
+│   │   ├── whatsapp.py        # WhatsAppClient (Meta Cloud API or Twilio)
+│   │   └── notifier.py        # UnifiedNotifier (Slack + Teams + WhatsApp)
+│   ├── monitoring/
+│   │   ├── metrics.py         # MetricsCollector — JSON run summary in reports/metrics/
+│   │   └── alerts.py          # AlertManager
 │   └── testrail/
 │       ├── client.py          # TestRailClient (add_results_for_cases, get_run)
-│       ├── result_mapper.py   # Groovy→Python port: pass/fail logic, Behave scenario → result
+│       ├── result_mapper.py   # Groovy→Python port: pass/fail logic, Behave→result
 │       └── pending_store.py   # Thread-safe JSON queue (reports/testrail/pending_results.json)
 │
-├── integrations/
-│   ├── command_parser.py      # Parse !run / !testrail / !status / !help
-│   ├── testrail_command.py    # Handle !testrail status/preview/push/discard
-│   ├── webhook_server.py      # Flask: /teams/webhook, /whatsapp/webhook, /health
-│   ├── teams.py               # TeamsClient (Adaptive Card via Power Automate)
-│   ├── whatsapp.py            # WhatsAppClient (Meta Cloud API or Twilio)
-│   └── notifier.py            # UnifiedNotifier (Slack + Teams + WhatsApp)
+├── e2e/                       # ← QA TEAM — feature files + step definitions only
+│   ├── features/
+│   │   ├── vehicle_api.feature# BL4B register/deregister (tagged @testrail_C*)
+│   │   └── *.feature
+│   ├── steps/
+│   │   ├── vehicle_api_steps.py
+│   │   ├── ai_steps.py
+│   │   └── *.py
+│   ├── pages/                 # Page Object Model
+│   ├── plugins/               # e.g. PerformancePlugin
+│   ├── utils/
+│   │   ├── api/
+│   │   │   ├── base_client.py # BaseAPIClient (requests.Session + retry + Allure)
+│   │   │   └── vehicle_client.py
+│   │   └── browser/           # Browser helpers
+│   ├── resources/config.yaml  # E2E-only config copy
+│   ├── environment.py         # Behave hooks — degrades gracefully without agent/
+│   ├── run_tests.py           # CLI entry point for QA team
+│   └── behave.ini             # pythonpath = . .. (resolves both e2e/ and root)
 │
-├── monitoring/
-│   ├── metrics.py             # MetricsCollector — JSON run summary in reports/metrics/
-│   └── alerts.py              # AlertManager (legacy, replaced by UnifiedNotifier)
+├── utils/                     # SHARED — both agent/ and e2e/ import from here
+│   ├── logger.py
+│   ├── misc.py
+│   └── config_validator.py
 │
-├── tests/                     # Unit tests (pytest)
-│   ├── test_testrail.py       # 71 tests — Groovy parity, store lifecycle, HTTP shape
-│   ├── test_vehicle_api_client.py  # 47 tests — transactionId, VehicleAPIClient
+├── helpers/                   # SHARED
+│   └── constants/
+│       └── framework_constants.py
+│
+├── tests/                     # Unit tests for agent/ (pytest)
+│   ├── conftest.py            # Adds root + e2e/ to sys.path for pytest
+│   ├── test_testrail.py       # 71 tests — Groovy parity, store lifecycle
+│   ├── test_vehicle_api_client.py  # 47 tests
 │   └── *.py
 │
-├── environment.py             # Behave lifecycle hooks (before_all/after_scenario/etc.)
-├── run_tests.py               # CLI entry point
 ├── resources/
 │   ├── config.yaml            # Framework config (NO secrets)
 │   └── requirements.txt
 └── .env.example               # All env vars documented (copy to .env)
 ```
+
+### Import conventions
+
+| Import | Resolved to |
+|--------|-------------|
+| `from agent.ai.llm_client import LLMClient` | `agent/ai/llm_client.py` |
+| `from agent.testrail.client import TestRailClient` | `agent/testrail/client.py` |
+| `from agent.integrations.notifier import UnifiedNotifier` | `agent/integrations/notifier.py` |
+| `from utils.logger import log_info_emoji` | `utils/logger.py` (root — shared) |
+| `from utils.api.vehicle_client import VehicleAPIClient` | `e2e/utils/api/vehicle_client.py` |
+| `from helpers.constants.framework_constants import Paths` | `helpers/constants/framework_constants.py` (root — shared) |
 
 ---
 
@@ -148,8 +188,8 @@ class VehicleRegistrationRequest:
 ### AI provider selection
 
 ```python
-# CORRECT — use the abstraction
-from ai.llm_client import LLMClient
+# CORRECT — use the abstraction (agent/ namespace)
+from agent.ai.llm_client import LLMClient
 client = LLMClient.from_config()
 response = client.generate(prompt=prompt, system=system, images=[screenshot_path])
 
@@ -218,7 +258,7 @@ Scenario tagging convention: `@testrail_C448337` → links to TestRail case C448
 
 ## Webhook server — chat commands
 
-Start the server: `python -m integrations.webhook_server`
+Start the server: `python -m agent.integrations.webhook_server`
 
 ```
 !run                          — run all tests

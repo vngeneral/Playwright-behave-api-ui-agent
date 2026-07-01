@@ -1,0 +1,49 @@
+{
+  "get_endpoints": [
+    {
+      "id": "get_basic",
+      "path": "get",
+      "description": "Basic GET returns 200 with origin and headers",
+      "expected_status": 200,
+      "assert_keys": ["origin", "headers", "url"]
+    },
+    {
+      "id": "get_status_200",
+      "path": "status/200",
+      "description": "Explicit 200 status endpoint",
+      "expected_status": 200,
+      "assert_keys": []
+    },
+    {
+      "id": "get_status_404",
+      "path": "status/404",
+      "description": "Not found status",
+      "expected_status": 404,
+      "assert_keys": []
+    }
+  ],
+  "post_endpoints": [
+    {
+      "id": "post_json",
+      "path": "post",
+      "description": "POST with JSON body echoed back",
+      "payload": {"framework": "playwright-behave", "version": "1.0"},
+      "expected_status": 200,
+      "assert_keys": ["json", "url"]
+    }
+  ],
+  "error_endpoints": [
+    {
+      "id": "error_400",
+      "path": "status/400",
+      "description": "Bad request status",
+      "expected_status": 400
+    },
+    {
+      "id": "error_500",
+      "path": "status/500",
+      "description": "Server error status",
+      "expected_status": 500
+    }
+  ]
+}

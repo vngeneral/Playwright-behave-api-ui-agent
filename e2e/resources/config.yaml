@@ -1,0 +1,93 @@
+# ─────────────────────────────────────────────────────────────
+# Framework Configuration
+# Override any key via environment variable: ENV, BROWSER, etc.
+# NEVER put secrets (passwords, webhook URLs, tokens) here.
+# ─────────────────────────────────────────────────────────────
+
+# Active environment (overridden by ENV env-var)
+environment: "dev"
+
+# ── AI provider (selector healing + test generation) ─────────
+# Provider selection: anthropic | openai | stub
+# Override with AI_PROVIDER env var.
+ai_provider: "anthropic"
+
+# Model name — overridden by AI_MODEL env var.
+# Anthropic defaults: claude-3-5-haiku-20241022 (fast) or claude-3-5-sonnet-20241022 (vision)
+# OpenAI defaults:    gpt-4o (vision) or gpt-4o-mini (fast)
+# Ollama (openai compat): devstral:24b, llama3.2-vision, etc.
+ai_model: "claude-3-5-haiku-20241022"
+
+# ── Browser ──────────────────────────────────────────────────
+# These are DEFAULTS. CLI flags (--browser, --headless) always win.
+browser:
+  default: "chromium"       # chromium | firefox | webkit
+  headless: false
+  timeout_ms: 10000         # default element wait
+  navigation_timeout_ms: 30000
+
+# ── Environments ─────────────────────────────────────────────
+environments:
+  dev:
+    base_url: "https://httpbin.org"
+    vehicle_api_url: "https://stage.bl4b.api.sample.com"   # override via VEHICLE_API_BASE_URL env var
+  staging:
+    base_url: "https://httpbin.org"
+    vehicle_api_url: "https://stage.bl4b.api.sample.com"
+  prod:
+    base_url: "https://httpbin.org"
+    vehicle_api_url: "https://prod.bl4b.api.sample.com"
+
+# ── Timeouts (ms) ────────────────────────────────────────────
+timeouts:
+  default: 10000
+  navigation: 30000
+  network_idle: 15000
+  page_load_threshold_s: 3.0   # assertion limit for performance tests
+
+# ── Retry ────────────────────────────────────────────────────
+retry:
+  max_attempts: 3
+  delay_seconds: 1.0
+  backoff_multiplier: 1.5      # multiply delay after each failed attempt
+
+# ── Parallel execution ───────────────────────────────────────
+parallel:
+  default_workers: 4
+  # Tags run in this order when --priority is used
+  priority_tags:
+    - "smoke"
+    - "regression"
+    - "api"
+    - "performance"
+    - "ai_healing"
+
+# ── Reporting ────────────────────────────────────────────────
+reporting:
+  screenshots_on_failure: true
+  attach_page_source: false
+  metrics_enabled: true
+  categories_file: "allure_categories.json"
+
+# ── Notifications ─────────────────────────────────────────────
+# Webhook URLs / recipients are read from env vars — never hardcoded.
+notifications:
+  slack_enabled: false
+  slack_webhook_env_var: "SLACK_WEBHOOK_URL"   # export this in CI
+  notify_on_failure_only: true
+
+# ── Test Data ────────────────────────────────────────────────
+test_data:
+  users_file: "test_data/users.json"
+  form_data_file: "test_data/form_data.json"
+  api_scenarios_file: "test_data/api_scenarios.json"
+  vehicle_api_file: "test_data/vehicle_api.json"
+  cleanup_after_run: false     # set true if tests write to a real DB
+
+# ── Vehicle API ───────────────────────────────────────────────
+# API key is read from VEHICLE_API_KEY env var — never stored here.
+vehicle_api:
+  partner_code: "HBL4BP-006"
+  request_timeout_s: 30
+  register_path: "bl4b/v1/vehicle/register"
+  deregister_path: "bl4b/v1/vehicle/deregister"

@@ -1,0 +1,42 @@
+{
+  "valid_users": [
+    {
+      "id": "user_001",
+      "name": "John Doe",
+      "phone": "123-456-7890",
+      "email": "john.doe@example.com",
+      "pizza_size": "large",
+      "topping": "bacon",
+      "comments": "Please deliver to the front door"
+    },
+    {
+      "id": "user_002",
+      "name": "Jane Smith",
+      "phone": "987-654-3210",
+      "email": "jane.smith@example.com",
+      "pizza_size": "medium",
+      "topping": "cheese",
+      "comments": "Ring the bell twice"
+    },
+    {
+      "id": "user_003",
+      "name": "Bob Johnson",
+      "phone": "555-123-4567",
+      "email": "bob.johnson@example.com",
+      "pizza_size": "small",
+      "topping": "onion",
+      "comments": "Leave at reception"
+    }
+  ],
+  "edge_case_users": [
+    {
+      "id": "user_edge_001",
+      "name": "O'Brien-Smith",
+      "phone": "+1 (800) 555-0199",
+      "email": "edge+test@example.com",
+      "pizza_size": "large",
+      "topping": "bacon",
+      "comments": "Special chars: café & résumé"
+    }
+  ]
+}
