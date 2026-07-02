@@ -21,9 +21,11 @@ from pathlib import Path
 # ── Path setup ────────────────────────────────────────────────────────────
 # Make both e2e/ and repo root importable so `from utils.logger import …`
 # (root) and `from utils.api.vehicle_client import …` (e2e/) both resolve.
+# _ROOT_DIR is inserted first so _E2E_DIR ends up at sys.path[0] — e2e/'s own
+# packages must win over any same-named package elsewhere.
 _E2E_DIR  = Path(__file__).parent.resolve()
 _ROOT_DIR = _E2E_DIR.parent.resolve()
-for _p in (_E2E_DIR, _ROOT_DIR):
+for _p in (_ROOT_DIR, _E2E_DIR):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
@@ -40,7 +42,7 @@ PRIORITY_ORDER = ["@smoke", "@regression", "@api", "@performance"]
 
 def build_behave_cmd(
     *,
-    features_dir: Path,
+    targets: list[str],
     tags: str | None,
     browser: str | None,
     env: str | None,
@@ -49,7 +51,7 @@ def build_behave_cmd(
     parallel: bool,
     workers: int,
 ) -> list[str]:
-    cmd = ["behave", str(features_dir)]
+    cmd = ["behave", *targets]
 
     if tags:
         cmd += ["--tags", tags]
@@ -73,11 +75,20 @@ def build_behave_cmd(
     return cmd
 
 
+def _resolve_targets(features: list[str]) -> list[str]:
+    """
+    Resolve CLI-provided feature paths to absolute paths (so they work
+    regardless of the subprocess cwd), or default to the whole features dir.
+    """
+    if not features:
+        return [str(_E2E_DIR / "features")]
+    return [str(Path(f).resolve()) for f in features]
+
+
 def run_tag(tag: str, args: argparse.Namespace, allure_dir: Path) -> int:
     """Run behave for a single tag.  Returns exit code."""
-    features_dir = _E2E_DIR / "features"
     cmd = build_behave_cmd(
-        features_dir=features_dir,
+        targets=_resolve_targets(args.features),
         tags=tag,
         browser=args.browser,
         env=args.env,
@@ -103,6 +114,8 @@ def main() -> int:
                         help="Run scenarios in parallel (requires behavex or pytest-bdd-parallel)")
     parser.add_argument("--workers",  type=int, default=4,
                         help="Parallel worker count (default: 4)")
+    parser.add_argument("features", nargs="*",
+                        help="Specific feature files to run (default: all under e2e/features/)")
     args = parser.parse_args()
 
     allure_dir = _ROOT_DIR / "allure-results"
@@ -117,9 +130,8 @@ def main() -> int:
         return max(exit_codes)
 
     # Single run
-    features_dir = _E2E_DIR / "features"
     cmd = build_behave_cmd(
-        features_dir=features_dir,
+        targets=_resolve_targets(args.features),
         tags=args.tags,
         browser=args.browser,
         env=args.env,

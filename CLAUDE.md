@@ -23,10 +23,11 @@ The framework is split into two layers so the AI/integration engine can be maint
 
 ```
 agent/       ← internal team only (AI, TestRail, integrations, monitoring)
-e2e/          ← QA team: features, steps, pages, plugins, utils/api, utils/browser
-utils/        ← SHARED: logger.py, misc.py (both layers import from here)
-helpers/      ← SHARED: framework_constants.py
+e2e/          ← QA team: features, steps, pages, plugins, utils/api, utils/browser, utils/reporting, utils/data_factory
+utils/        ← SHARED: logger.py, misc.py, config_validator.py (both layers import from here)
+helpers/      ← SHARED: framework_constants.py, file_system.py
 tests/        ← unit tests for agent/ (pytest)
+docs/         ← guides, e.g. AI test generation from cURL/plaintext
 ```
 
 **QA team** receives a copy of `e2e/` only — they run UI and API tests without needing the agent.  
@@ -62,6 +63,9 @@ allure open allure-report
 ## How to run unit tests
 
 ```bash
+# One-time setup
+pip install -r resources/requirements-dev.txt
+
 # All unit tests
 python -m pytest tests/ -v
 
@@ -336,6 +340,8 @@ Tag every scenario with at least one of: `@smoke`, `@regression`, `@api`, `@perf
 
 Link to TestRail: add `@testrail_C<case_id>` tag on each scenario. The `after_scenario` hook in `environment.py` queues it automatically.
 
+To generate a draft feature file from a cURL command or a plaintext requirement instead of writing Gherkin by hand, see [docs/ai-test-generation-guide.md](docs/ai-test-generation-guide.md) — always review AI-generated scenarios before committing them.
+
 ---
 
 ## Known decisions (do not revert)
@@ -345,6 +351,7 @@ Link to TestRail: add `@testrail_C<case_id>` tag on each scenario. The `after_sc
 - **TestRail push is always manual** — results must be reviewed before pushing. No `auto_push` flag exists by design.
 - **GitHub Actions workflow_dispatch only** — `push` and `pull_request` triggers disabled. Re-enable only after setting secrets in GitHub Actions.
 - **`ollama` package removed** — replaced by `anthropic` and `openai`. To use Ollama, set `AI_PROVIDER=openai` and `AI_BASE_URL=http://localhost:11434/v1`.
+- **No `utils/__init__.py` at root or in `e2e/utils/`** — `utils` is intentionally a PEP 420 namespace package split across `utils/` (root: logger, misc, config_validator) and `e2e/utils/` (api/, browser/, reporting.py, data_factory.py). Adding either `__init__.py` back makes `utils` resolve to only one of the two directories, silently breaking imports in the other. Same reasoning applies to why the pre-restructure root-level `ai/`, `integrations/`, `monitoring/`, `pages/`, `plugins/`, `steps/`, `features/`, `test_data/`, `config/` directories were deleted rather than kept as a second copy — do not recreate them.
 
 ---
 

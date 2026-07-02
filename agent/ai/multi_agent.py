@@ -18,7 +18,7 @@ Provider configuration (env vars):
     AI_MODEL      — model override
 
 Usage:
-    python -m ai.multi_agent \\
+    python -m agent.ai.multi_agent \\
         --url https://httpbin.org/forms/post \\
         --tags smoke \\
         --headless
@@ -152,7 +152,7 @@ class GeneratorAgent(BaseAgent):
         log_info_emoji("⚙️", f"[{self.name}] Generating feature file …")
         gen = AITestGenerator()
         gherkin = gen.generate(url=ctx.target_url, tags=ctx.tags)
-        output = f"features/ai_generated_{Path(ctx.target_url).stem or 'page'}.feature"
+        output = f"e2e/features/ai_generated_{Path(ctx.target_url).stem or 'page'}.feature"
         gen.save(gherkin, output)
         ctx.feature_path = output
         ctx.generated_gherkin = gherkin
@@ -177,12 +177,18 @@ class ExecutorAgent(BaseAgent):
         os.environ["HEADLESS"] = "True" if ctx.headless else "False"
         os.environ["BROWSER"] = ctx.browser
 
+        # e2e/behave.ini (paths/step_paths/pythonpath) is only picked up when
+        # behave runs with cwd=e2e/, and feature_path is relative to e2e/ —
+        # mirrors e2e/run_tests.py's own subprocess invocation.
+        e2e_dir = Path(__file__).resolve().parents[2] / "e2e"
+        feature_arg = Path(ctx.feature_path).relative_to("e2e")
+
         cmd = [
             sys.executable, "-m", "behave",
             "-f", "allure_behave.formatter:AllureFormatter",
             "-o", ALLURE_RESULTS_DIR,
             "--no-capture",
-            ctx.feature_path,
+            str(feature_arg),
         ]
         if ctx.tags:
             for tag in ctx.tags:
@@ -190,7 +196,7 @@ class ExecutorAgent(BaseAgent):
 
         try:
             proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=300
+                cmd, capture_output=True, text=True, timeout=300, cwd=str(e2e_dir)
             )
             ctx.exit_code = proc.returncode
             ctx.run_stdout = proc.stdout + proc.stderr
@@ -234,10 +240,14 @@ class ValidatorAgent(BaseAgent):
             f"Generated Gherkin:\n{ctx.generated_gherkin[:2000]}"
         )
 
+        raw = ""
         try:
             raw = self._llm(prompt, system=system)
-            m = re.search(r'\{.*\}', raw, re.DOTALL)
-            report = json.loads(m.group(0)) if m else {}
+            try:
+                report = json.loads(raw)
+            except json.JSONDecodeError:
+                m = re.search(r'\{.*\}', raw, re.DOTALL)
+                report = json.loads(m.group(0)) if m else {}
         except Exception as exc:
             log_warning(f"[{self.name}] LLM validation failed ({exc})")
             report = {}
@@ -298,8 +308,8 @@ def _parse_args():
     p.add_argument("--url", required=True, help="Target page URL")
     p.add_argument("--tags", nargs="*", default=["ai_generated"],
                    help="Behave tags to apply")
-    p.add_argument("--headless", action="store_true", default=True,
-                   help="Run browser headless (default: True)")
+    p.add_argument("--headless", action="store_true", default=False,
+                   help="Run browser headless (default: False)")
     p.add_argument("--browser", choices=["chromium", "firefox", "webkit"],
                    default="chromium")
     return p.parse_args()

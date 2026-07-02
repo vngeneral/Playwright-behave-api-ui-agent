@@ -101,7 +101,11 @@ class MetricsCollector:
             feature=scenario.feature.name if hasattr(scenario, "feature") else "",
             status=status,
             duration_s=round(duration, 3),
-            tags=list(scenario.tags),
+            # scenario.tags yields behave Tag objects (str subclass requiring
+            # a `line` attribute) — coerce to plain str so this dataclass can
+            # be safely deepcopy'd/JSON-serialised (dataclasses.asdict() and
+            # json.dumps both choke on Tag's copy/reduce protocol).
+            tags=[str(t) for t in scenario.tags],
             error_message=error,
         )
         self._metrics.scenarios.append(result)

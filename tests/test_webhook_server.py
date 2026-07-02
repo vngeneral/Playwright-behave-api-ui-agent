@@ -35,7 +35,7 @@ class TestHealthEndpoint(unittest.TestCase):
                    "WHATSAPP_API_TOKEN", "WHATSAPP_VERIFY_TOKEN"):
             os.environ.pop(k, None)
 
-        from integrations.webhook_server import create_app
+        from agent.integrations.webhook_server import create_app
         self.app = create_app()
         self.client = self.app.test_client()
 
@@ -55,7 +55,7 @@ class TestTeamsWebhookEndpoint(unittest.TestCase):
     def setUp(self):
         os.environ["TEAMS_OUTGOING_WEBHOOK_SECRET"] = self.SECRET
         os.environ.pop("TEAMS_WEBHOOK_URL", None)
-        from integrations.webhook_server import create_app
+        from agent.integrations.webhook_server import create_app
         self.app = create_app()
         self.client = self.app.test_client()
 
@@ -88,7 +88,7 @@ class TestTeamsWebhookEndpoint(unittest.TestCase):
         body = json.loads(resp.data)
         self.assertIn("No test runs", body["text"])
 
-    @patch("integrations.webhook_server._run_tests_async")
+    @patch("agent.integrations.webhook_server._run_tests_async")
     def test_run_command_acknowledged(self, mock_async):
         resp = self._post({"text": "!run --tags @smoke --headless"})
         self.assertEqual(resp.status_code, 200)
@@ -96,7 +96,7 @@ class TestTeamsWebhookEndpoint(unittest.TestCase):
         self.assertIn("🚀", body["text"])
         mock_async.assert_called_once()
 
-    @patch("integrations.webhook_server._run_tests_async")
+    @patch("agent.integrations.webhook_server._run_tests_async")
     def test_run_command_passes_correct_argv(self, mock_async):
         self._post({"text": "!run --tags @smoke --browser firefox"})
         call_argv = mock_async.call_args[0][0]
@@ -136,7 +136,7 @@ class TestWhatsAppWebhookEndpoint(unittest.TestCase):
         os.environ["WHATSAPP_PHONE_NUMBER_ID"] = "1234"
         os.environ["WHATSAPP_NOTIFY_TO"]    = "+61400000000"
         os.environ.pop("TWILIO_ACCOUNT_SID", None)
-        from integrations.webhook_server import create_app
+        from agent.integrations.webhook_server import create_app
         self.app = create_app()
         self.client = self.app.test_client()
 
@@ -189,7 +189,7 @@ class TestWhatsAppWebhookEndpoint(unittest.TestCase):
         }
         return json.dumps(payload).encode()
 
-    @patch("integrations.whatsapp.requests.post")
+    @patch("agent.integrations.whatsapp.requests.post")
     def test_help_command_sends_reply(self, mock_post):
         mock_post.return_value = MagicMock(status_code=200)
         resp = self.client.post(
@@ -203,8 +203,8 @@ class TestWhatsAppWebhookEndpoint(unittest.TestCase):
         call_body = json.loads(mock_post.call_args[1]["data"])
         self.assertIn("!run", call_body["text"]["body"])
 
-    @patch("integrations.webhook_server._run_tests_async")
-    @patch("integrations.whatsapp.requests.post")
+    @patch("agent.integrations.webhook_server._run_tests_async")
+    @patch("agent.integrations.whatsapp.requests.post")
     def test_run_command_triggers_tests(self, mock_post, mock_async):
         mock_post.return_value = MagicMock(status_code=200)
         resp = self.client.post(
@@ -234,12 +234,12 @@ class TestWhatsAppWebhookEndpoint(unittest.TestCase):
 
 class TestFormatStatus(unittest.TestCase):
     def test_no_runs_yet(self):
-        from integrations.webhook_server import _format_status
+        from agent.integrations.webhook_server import _format_status
         msg = _format_status({"status": "no_runs_yet"})
         self.assertIn("No test runs", msg)
 
     def test_passed_run(self):
-        from integrations.webhook_server import _format_status
+        from agent.integrations.webhook_server import _format_status
         msg = _format_status({
             "status": "passed",
             "timestamp": "2026-01-01T10:00:00",
@@ -249,7 +249,7 @@ class TestFormatStatus(unittest.TestCase):
         self.assertIn("All tests passed", msg)
 
     def test_failed_run(self):
-        from integrations.webhook_server import _format_status
+        from agent.integrations.webhook_server import _format_status
         msg = _format_status({
             "status": "failed",
             "timestamp": "2026-01-01T10:00:00",

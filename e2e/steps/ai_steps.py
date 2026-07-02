@@ -1,37 +1,14 @@
 """
 Step definitions for AI-driven test scenarios.
 Covers: self-healing selector demo and AI-generated test execution.
+
+The contact-form navigation/fill/submit steps used by the `ai_healing` tag
+scenarios are defined once in forms_steps.py and shared here — Behave step
+definitions are registered globally, so they don't need to be redefined.
 """
 from behave import step
-from playwright.sync_api import expect
 
 from utils.logger import log_info_emoji
-
-
-# ---------------------------------------------------------------------------
-# Contact-form steps (shared with forms.feature via ai_healing tag)
-# ---------------------------------------------------------------------------
-
-@step("the user navigates to the contact form")
-def step_navigate_contact_form(context):
-    contact_form = context.page_factory.get_contact_form_page(context)
-    contact_form.navigate_to_contact_form(context.base_url)
-
-
-@step("the user fills out the contact form with valid data")
-def step_fill_contact_form_valid(context):
-    contact_form = context.page_factory.get_contact_form_page(context)
-    contact_form.fill_form_with_valid_data()
-    contact_form.submit_form()
-    context.form_filled = True
-
-
-@step("the form should be submitted successfully")
-def step_verify_form_submission(context):
-    contact_form = context.page_factory.get_contact_form_page(context)
-    # After a successful submit the form fields should no longer be visible
-    expect(context.page.locator(contact_form.CUSTOMER_NAME_INPUT)).not_to_be_visible()
-    assert getattr(context, "form_filled", False), "form_filled flag was not set"
 
 
 # ---------------------------------------------------------------------------

@@ -26,7 +26,7 @@ from unittest.mock import MagicMock, patch
 # Make sure project root is on the path when running from tests/
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from utils.testrail.result_mapper import (
+from agent.testrail.result_mapper import (
     TESTRAIL_FAILED,
     TESTRAIL_PASSED,
     StepResult,
@@ -38,18 +38,18 @@ from utils.testrail.result_mapper import (
     from_step_results,
     is_passing_status_code,
 )
-from utils.testrail.pending_store import (
+from agent.testrail.pending_store import (
     STATUS_PENDING,
     STATUS_PUSHED,
     PendingStore,
 )
-from utils.testrail.client import (
+from agent.testrail.client import (
     TestRailAPIError,
     TestRailClient,
     TestRailConfigError,
 )
-from integrations.command_parser import parse_command
-from integrations.testrail_command import (
+from agent.integrations.command_parser import parse_command
+from agent.integrations.testrail_command import (
     handle_testrail_command,
     _parse_push_args,
 )
@@ -514,7 +514,7 @@ class TestTestrailCommandHandler(unittest.TestCase):
         store_path = Path(self._tmpdir.name) / "pending.json"
         self._store = PendingStore(path=store_path)
         self._patcher = patch(
-            "integrations.testrail_command.get_default_store",
+            "agent.integrations.testrail_command.get_default_store",
             return_value=self._store,
         )
         self._patcher.start()
@@ -577,8 +577,8 @@ class TestTestrailCommandHandler(unittest.TestCase):
         mock_client.__enter__ = lambda s: s
         mock_client.__exit__ = MagicMock(return_value=False)
 
-        with patch("integrations.testrail_command.TestRailClient.from_env", return_value=mock_client), \
-             patch("integrations.testrail_command.TestRailClient.default_run_id", return_value=42):
+        with patch("agent.integrations.testrail_command.TestRailClient.from_env", return_value=mock_client), \
+             patch("agent.integrations.testrail_command.TestRailClient.default_run_id", return_value=42):
             resp = handle_testrail_command("!testrail push")
 
         mock_client.add_results_for_cases.assert_called_once()
@@ -592,15 +592,15 @@ class TestTestrailCommandHandler(unittest.TestCase):
         mock_client.__enter__ = lambda s: s
         mock_client.__exit__ = MagicMock(return_value=False)
 
-        with patch("integrations.testrail_command.TestRailClient.from_env", return_value=mock_client), \
-             patch("integrations.testrail_command.TestRailClient.default_run_id", return_value=1):
+        with patch("agent.integrations.testrail_command.TestRailClient.from_env", return_value=mock_client), \
+             patch("agent.integrations.testrail_command.TestRailClient.default_run_id", return_value=1):
             handle_testrail_command("!testrail push")
 
         self.assertFalse(self._store.has_pending())
 
     def test_push_missing_config(self):
         self._add_result()
-        with patch("integrations.testrail_command.TestRailClient.from_env",
+        with patch("agent.integrations.testrail_command.TestRailClient.from_env",
                    side_effect=TestRailConfigError("No URL")):
             resp = handle_testrail_command("!testrail push")
         self.assertIn("not configured", resp.lower())
@@ -613,8 +613,8 @@ class TestTestrailCommandHandler(unittest.TestCase):
         mock_client.add_results_for_cases.side_effect = TestRailAPIError(
             status_code=500, context="test", body="Server Error"
         )
-        with patch("integrations.testrail_command.TestRailClient.from_env", return_value=mock_client), \
-             patch("integrations.testrail_command.TestRailClient.default_run_id", return_value=1):
+        with patch("agent.integrations.testrail_command.TestRailClient.from_env", return_value=mock_client), \
+             patch("agent.integrations.testrail_command.TestRailClient.default_run_id", return_value=1):
             resp = handle_testrail_command("!testrail push")
         self.assertIn("❌", resp)
         self.assertIn("500", resp)
@@ -626,8 +626,8 @@ class TestTestrailCommandHandler(unittest.TestCase):
         mock_client.__enter__ = lambda s: s
         mock_client.__exit__ = MagicMock(return_value=False)
 
-        with patch("integrations.testrail_command.TestRailClient.from_env", return_value=mock_client), \
-             patch("integrations.testrail_command.TestRailClient.default_run_id", return_value=1):
+        with patch("agent.integrations.testrail_command.TestRailClient.from_env", return_value=mock_client), \
+             patch("agent.integrations.testrail_command.TestRailClient.default_run_id", return_value=1):
             handle_testrail_command("!testrail push --case 448337")
 
         results = mock_client.add_results_for_cases.call_args[1]["results"]

@@ -36,14 +36,19 @@ from pathlib import Path
 #   from utils.logger import ...               → root utils/logger.py
 #   from helpers.constants.framework_constants → root helpers/
 #   from agent.ai.selector_healer import ...  → root agent/ai/selector_healer.py
+#
+# _ROOT_DIR is inserted FIRST so _E2E_DIR ends up at sys.path[0] — e2e/'s own
+# `pages`/`utils.api`/`utils.browser`/`plugins` packages must win over any
+# same-named package, since e2e/ is meant to be self-sufficient.
 _E2E_DIR  = Path(__file__).parent
 _ROOT_DIR = _E2E_DIR.parent
-for _p in (_E2E_DIR, _ROOT_DIR):
+for _p in (_ROOT_DIR, _E2E_DIR):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
 # ── Shared imports (always available) ────────────────────────────────────
 from helpers.constants.framework_constants import Paths, Reporting
+from helpers.file_system import create_reports_structure
 from utils.browser.browser import prepare_browser
 from utils.config_validator import validate_config
 from utils.logger import log_failure, log_info_emoji, log_warning
@@ -127,6 +132,9 @@ else:
 # ---------------------------------------------------------------------------
 
 def before_all(context):
+    # ── Reports directory structure ───────────────────────────────────────
+    create_reports_structure()
+
     # ── Config validation ──────────────────────────────────────────────────
     config = load_config()
     try:

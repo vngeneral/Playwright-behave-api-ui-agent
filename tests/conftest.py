@@ -6,13 +6,13 @@ subdirectory when running:
 
     python -m pytest tests/ -v
 
-The repo root must be on sys.path first so root-level packages take priority:
+The repo root is added first so shared/root-level packages resolve:
     agent/   — AI, TestRail, integrations, monitoring
-    utils/    — logger, misc (shared)
+    utils/    — logger, misc, config_validator (shared)
     helpers/  — framework_constants (shared)
-    ai/       — original AI module (still present for backwards compat)
 
-e2e/ follows so its sub-packages are importable as:
+e2e/ is added last (sys.path.insert(0, ...) each time, so it ends up first)
+so its own sub-packages take priority over any same-named package:
     utils.api.vehicle_client  → e2e/utils/api/vehicle_client.py
     utils.browser.browser     → e2e/utils/browser/browser.py
     pages.page_factory        → e2e/pages/page_factory.py

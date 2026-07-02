@@ -21,11 +21,11 @@ GET  /health
 
 Starting the server
 -------------------
-    python -m integrations.webhook_server          # default host 0.0.0.0:5000
-    WEBHOOK_PORT=8080 python -m integrations.webhook_server
+    python -m agent.integrations.webhook_server          # default host 0.0.0.0:5000
+    WEBHOOK_PORT=8080 python -m agent.integrations.webhook_server
 
     # Or import and call:
-    from integrations.webhook_server import create_app
+    from agent.integrations.webhook_server import create_app
     app = create_app()
     app.run(host="0.0.0.0", port=5000)
 
@@ -131,7 +131,7 @@ def create_app() -> Flask:
 
         if cmd["action"] == "run":
             argv = command_to_argv(cmd)
-            ack = f"🚀 Test run started\n`python run_tests.py {' '.join(argv)}`"
+            ack = f"🚀 Test run started\n`python e2e/run_tests.py {' '.join(argv)}`"
             _run_tests_async(argv, _last_run, _lock, notify_teams=teams)
             return jsonify({"type": "message", "text": ack}), 200
 
@@ -196,7 +196,7 @@ def create_app() -> Flask:
 
             if cmd["action"] == "run":
                 argv = command_to_argv(cmd)
-                ack  = f"🚀 Test run started\n`python run_tests.py {' '.join(argv)}`"
+                ack  = f"🚀 Test run started\n`python e2e/run_tests.py {' '.join(argv)}`"
                 whatsapp.send_text(sender, ack)
                 _run_tests_async(argv, _last_run, _lock, notify_whatsapp=whatsapp, reply_to=sender)
                 continue
@@ -225,10 +225,10 @@ def _run_tests_async(
     notify_whatsapp: WhatsAppClient | None = None,
     reply_to: str | None = None,
 ) -> None:
-    """Run run_tests.py in a background thread and send notifications when done."""
+    """Run e2e/run_tests.py in a background thread and send notifications when done."""
 
     def _worker() -> None:
-        cmd = [sys.executable, "run_tests.py"] + argv
+        cmd = [sys.executable, "e2e/run_tests.py"] + argv
         start = time.monotonic()
         log_info_emoji("🚀", f"[webhook] Starting: {' '.join(cmd)}")
 

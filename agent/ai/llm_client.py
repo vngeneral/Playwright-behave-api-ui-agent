@@ -223,7 +223,7 @@ class OpenAILLMClient(BaseLLMClient):
         messages.append({"role": "user", "content": user_content})
 
         response = self._client.chat.completions.create(
-            model=model     if (model := self._model) else "gpt-4o",
+            model=self._model or "gpt-4o",
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,

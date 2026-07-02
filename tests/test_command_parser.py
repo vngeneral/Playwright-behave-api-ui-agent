@@ -4,7 +4,7 @@ No network calls needed.
 """
 import unittest
 
-from integrations.command_parser import (
+from agent.integrations.command_parser import (
     CommandParseError,
     command_to_argv,
     parse_command,

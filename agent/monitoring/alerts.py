@@ -10,7 +10,7 @@ Design decisions (correcting the original suggestion):
   ✓ RIGHT:  Delegate email to CI/CD (GitHub Actions, GitLab, Jenkins)
 
 Usage:
-    from monitoring.alerts import AlertManager
+    from agent.monitoring.alerts import AlertManager
     alerts = AlertManager()
     alerts.notify(metrics)   # fires if configured and thresholds met
 
@@ -30,7 +30,7 @@ from helpers.constants.framework_constants import Reporting
 from utils.logger import log_info_emoji, log_warning, log_failure
 
 if TYPE_CHECKING:
-    from monitoring.metrics import RunMetrics
+    from agent.monitoring.metrics import RunMetrics
 
 
 class AlertManager:

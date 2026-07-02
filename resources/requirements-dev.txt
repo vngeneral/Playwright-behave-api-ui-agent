@@ -1,0 +1,6 @@
+# Dev/test-only dependencies for running the agent/ unit test suite.
+# Install alongside requirements.txt:
+#   pip install -r resources/requirements.txt -r resources/requirements-dev.txt
+#   python -m pytest tests/ -v
+-r requirements.txt
+pytest~=8.3

@@ -6,7 +6,7 @@ Wraps Slack (existing AlertManager), Teams, and WhatsApp into one interface.
 
 Usage in environment.py::
 
-    from integrations.notifier import UnifiedNotifier
+    from agent.integrations.notifier import UnifiedNotifier
     _notifier = UnifiedNotifier()
 
     def after_all(context):
@@ -31,7 +31,7 @@ from agent.integrations.whatsapp import WhatsAppClient
 from utils.logger import log_info_emoji, log_failure
 
 if TYPE_CHECKING:
-    from monitoring.metrics import RunMetrics
+    from agent.monitoring.metrics import RunMetrics
 
 
 class UnifiedNotifier:
@@ -44,7 +44,7 @@ class UnifiedNotifier:
 
     def __init__(self) -> None:
         # Lazy-import to avoid circular dependency with monitoring.alerts
-        from monitoring.alerts import AlertManager  # noqa: PLC0415
+        from agent.monitoring.alerts import AlertManager  # noqa: PLC0415
         self._slack   = AlertManager()
         self._teams   = TeamsClient()
         self._whatsapp = WhatsAppClient()

@@ -33,7 +33,7 @@ import requests
 from utils.logger import log_info_emoji, log_warning, log_failure
 
 if TYPE_CHECKING:
-    from monitoring.metrics import RunMetrics
+    from agent.monitoring.metrics import RunMetrics
 
 # ---------------------------------------------------------------------------
 # Env-var names (never the values themselves)

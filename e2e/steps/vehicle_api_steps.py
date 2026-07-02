@@ -15,11 +15,27 @@ from __future__ import annotations
 import json
 
 import allure
-from behave import given, step, then, when
+from behave import given, register_type, step, then, when
 
 from utils.api.vehicle_client import VehicleAPIClient
 from utils.logger import log_failure, log_info_emoji
 from utils.misc import load_config
+
+
+# ---------------------------------------------------------------------------
+# Custom parse type — quoted values must not swallow the closing quote
+# ---------------------------------------------------------------------------
+# Untyped {name} fields are greedy and can match past their own closing
+# quote (e.g. `partner_code` absorbing ` omitting field "X"`), which makes
+# `'...for partner "{partner_code}"'` ambiguous with any step that extends
+# it (e.g. `'...for partner "{partner_code}" omitting field "{field_name}"'`).
+# Restricting quoted fields to "no quote characters" removes the overlap.
+def _parse_quoted(text: str) -> str:
+    return text
+
+
+_parse_quoted.pattern = r'[^"]+'
+register_type(Quoted=_parse_quoted)
 
 
 # ---------------------------------------------------------------------------
@@ -41,7 +57,7 @@ def step_init_vehicle_client(context):
 # When — Registration
 # ---------------------------------------------------------------------------
 
-@when('I register VIN "{vin}" for partner "{partner_code}"')
+@when('I register VIN "{vin:Quoted}" for partner "{partner_code:Quoted}"')
 def step_register_single_vin(context, vin: str, partner_code: str):
     context.vehicle_response = context.vehicle_client.register_vehicles(
         partner_code=partner_code,
@@ -50,7 +66,7 @@ def step_register_single_vin(context, vin: str, partner_code: str):
     _attach_response(context, "register")
 
 
-@when('I register the following VINs for partner "{partner_code}"')
+@when('I register the following VINs for partner "{partner_code:Quoted}"')
 def step_register_batch_vins(context, partner_code: str):
     """Table column: | vin |"""
     vin_list = [row["vin"] for row in context.table]
@@ -61,7 +77,7 @@ def step_register_batch_vins(context, partner_code: str):
     _attach_response(context, "register_batch")
 
 
-@when('I register VIN "{vin}" for partner "{partner_code}" with an invalid API key')
+@when('I register VIN "{vin:Quoted}" for partner "{partner_code:Quoted}" with an invalid API key')
 def step_register_invalid_key(context, vin: str, partner_code: str):
     context.vehicle_response = context.vehicle_client.register_vehicles_with_invalid_key(
         partner_code=partner_code,
@@ -70,7 +86,7 @@ def step_register_invalid_key(context, vin: str, partner_code: str):
     _attach_response(context, "register_invalid_key")
 
 
-@when('I register VIN "{vin}" for partner "{partner_code}" omitting field "{field_name}"')
+@when('I register VIN "{vin:Quoted}" for partner "{partner_code:Quoted}" omitting field "{field_name:Quoted}"')
 def step_register_missing_field(context, vin: str, partner_code: str, field_name: str):
     context.vehicle_response = context.vehicle_client.register_without_required_field(
         missing_field=field_name,
@@ -80,7 +96,7 @@ def step_register_missing_field(context, vin: str, partner_code: str, field_name
     _attach_response(context, f"register_missing_{field_name}")
 
 
-@when('I register an empty VIN list for partner "{partner_code}"')
+@when('I register an empty VIN list for partner "{partner_code:Quoted}"')
 def step_register_empty_vin_list(context, partner_code: str):
     context.vehicle_response = context.vehicle_client.register_vehicles(
         partner_code=partner_code,
@@ -93,7 +109,7 @@ def step_register_empty_vin_list(context, partner_code: str):
 # When — Deregistration
 # ---------------------------------------------------------------------------
 
-@when('I deregister VIN "{vin}" for partner "{partner_code}"')
+@when('I deregister VIN "{vin:Quoted}" for partner "{partner_code:Quoted}"')
 def step_deregister_single_vin(context, vin: str, partner_code: str):
     context.vehicle_response = context.vehicle_client.deregister_vehicles(
         partner_code=partner_code,
@@ -102,7 +118,7 @@ def step_deregister_single_vin(context, vin: str, partner_code: str):
     _attach_response(context, "deregister")
 
 
-@when('I deregister the following VINs for partner "{partner_code}"')
+@when('I deregister the following VINs for partner "{partner_code:Quoted}"')
 def step_deregister_batch_vins(context, partner_code: str):
     """Table column: | vin |"""
     vin_list = [row["vin"] for row in context.table]

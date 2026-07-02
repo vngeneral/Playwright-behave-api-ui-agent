@@ -479,11 +479,11 @@ class TestVehicleApiTestData(unittest.TestCase):
     def setUp(self):
         self.data_path = os.path.join(
             os.path.dirname(__file__),
-            "..", "test_data", "vehicle_api.json"
+            "..", "e2e", "test_data", "vehicle_api.json"
         )
 
     def test_file_exists(self):
-        self.assertTrue(os.path.exists(self.data_path), "test_data/vehicle_api.json not found")
+        self.assertTrue(os.path.exists(self.data_path), "e2e/test_data/vehicle_api.json not found")
 
     def test_has_required_sections(self):
         with open(self.data_path) as f:
