@@ -1,17 +1,18 @@
 # Generating test cases from cURL and plaintext
 
-`AITestGenerator` (`agent/ai/test_generator.py`) turns three kinds of input into a
+`AITestGenerator` (`agent/ai/test_generator.py`) turns four kinds of input into a
 Gherkin `.feature` file, using the same cloud LLM configured for the rest of the
 framework (`AI_PROVIDER` / `AI_API_KEY` / `AI_MODEL` — see `.env.example`):
 
-| Input          | Method                       | Good for                                   |
-|----------------|-------------------------------|---------------------------------------------|
-| Live page URL  | `generate()`                 | UI scenarios for a page that already exists |
-| cURL command   | `generate_from_curl()`        | API scenarios for an endpoint you can call  |
-| Plaintext      | `generate_from_text()`        | Anything not yet built, or UI + API mixed   |
+| Input                       | Method                               | Good for                                          |
+|------------------------------|---------------------------------------|----------------------------------------------------|
+| Live page URL                | `generate()`                         | UI scenarios for a page that already exists         |
+| cURL command                 | `generate_from_curl()`                | API scenarios for an endpoint you can call          |
+| cURL command + UI screenshot | `generate_from_curl_and_screenshot()` | UI+API scenarios that name real form/button labels  |
+| Plaintext                    | `generate_from_text()`                | Anything not yet built, or UI + API mixed           |
 
-This guide covers the last two — cURL and plaintext — since those don't require a
-live target to point Playwright at.
+This guide covers cURL (alone and with a screenshot) and plaintext — those don't
+require a live target to point Playwright at.
 
 Every mode produces a **draft**. Nothing is ever run or committed automatically —
 review the output before it goes into `e2e/features/` (see [Reviewing output](#reviewing-output-before-you-commit-it)).
@@ -57,6 +58,52 @@ validation-error case and, if credentials were present, an auth-failure case.
 file: `Authorization`, `x-api-key`, `api-key`, `x-auth-token`, `Cookie`, and
 anything passed via `-u`/`--user` or `-b`/`--cookie`. The LLM only ever sees
 the placeholder, never your real key.
+
+## cURL + UI screenshot workflow
+
+Use this when the API call is triggered from a page you already have — a
+screenshot lets the LLM name the actual button labels, field names, and form
+title in the `Given`/`When` steps instead of generic placeholders, while
+`Then` steps still assert on the API response exactly like the cURL-only
+workflow.
+
+Requires a vision-capable model: `claude-3-5-sonnet-20241022` (Anthropic) or
+`gpt-4o` (OpenAI). The default fast/cheap model (`claude-3-5-haiku-20241022`)
+does not accept images — set `AI_MODEL` accordingly.
+
+### 1. Capture a screenshot of the triggering page
+
+Any local PNG/JPG/GIF/WEBP file works — e.g. a Playwright screenshot taken
+during a manual exploration session, or one saved by `context.page.screenshot(...)`.
+
+### 2. Generate the feature file
+
+```bash
+python -m agent.ai.test_generator \
+  --curl 'curl -X POST https://stage.bl4b.api.sample.com/bl4b/v1/vehicle/register -H "x-api-key: secret123" -d "{\"vin\":\"KMUHCESC7RU179347\"}"' \
+  --screenshot reports/screenshots/register-form.png \
+  --feature e2e/features/ai_generated_vehicle_register.feature \
+  --tags api regression
+```
+
+`--screenshot` requires `--curl` — it has no effect paired with `--url` or
+`--text`. Secret redaction rules are identical to the cURL-only workflow (see
+[Secret handling](#secret-handling) above); only the parsed request text is
+sent to the LLM's text channel, the screenshot is sent as an image attachment.
+
+### Programmatic use
+
+```python
+from agent.ai.test_generator import AITestGenerator
+
+gen = AITestGenerator()
+gherkin = gen.generate_from_curl_and_screenshot(
+    curl_command=curl_command,
+    screenshot_path="reports/screenshots/register-form.png",
+    tags=["api", "smoke"],
+)
+gen.save(gherkin, "e2e/features/ai_generated_vehicle_register.feature")
+```
 
 ## Plaintext workflow
 

@@ -1,0 +1,85 @@
+Feature: Vehicle Registration API — Platform Partner BL4B # features/vehicle_api.feature:1
+  As a platform partner
+  I want to register and deregister vehicles via the BL4B API
+  So that vehicle eligibility is accurately maintained
+  Background:   # features/vehicle_api.feature:6
+
+  @api @smoke @vehicle_registration @testrail_C448337
+  Scenario: Register a single valid VIN                              # features/vehicle_api.feature:14
+    Given Vehicle API client is initialized                          # None
+    When I register VIN "KMUHCESC7RU179347" for partner "HBL4BP-006" # None
+    Then the API response status should be 200                       # None
+    And the response body should be valid JSON                       # None
+    And the response should contain a transaction reference          # None
+
+  @api @smoke @vehicle_registration @testrail_C448338
+  Scenario: Register a batch of VINs in one request             # features/vehicle_api.feature:21
+    Given Vehicle API client is initialized                     # None
+    When I register the following VINs for partner "HBL4BP-006" # None
+      | vin               |
+      | KMUHCESC7RU179347 |
+      | KM8JFCA14PU000001 |
+      | KM8J3CA46MU283910 |
+    Then the API response status should be 200                  # None
+    And the response body should be valid JSON                  # None
+
+  @api @smoke @vehicle_deregistration @testrail_C448339
+  Scenario: Deregister a single valid VIN                              # features/vehicle_api.feature:35
+    Given Vehicle API client is initialized                            # None
+    When I deregister VIN "KM8JFDA25PU103343" for partner "HBL4BP-006" # None
+    Then the API response status should be 200                         # None
+    And the response body should be valid JSON                         # None
+    And the response should contain a transaction reference            # None
+
+  @api @smoke @vehicle_deregistration @testrail_C448340
+  Scenario: Deregister a batch of VINs in one request             # features/vehicle_api.feature:42
+    Given Vehicle API client is initialized                       # None
+    When I deregister the following VINs for partner "HBL4BP-006" # None
+      | vin               |
+      | KM8JFDA25PU103343 |
+      | KM8J3CA46MU283910 |
+    Then the API response status should be 200                    # None
+    And the response body should be valid JSON                    # None
+
+  @api @regression @vehicle_registration
+  Scenario Outline: Register VINs for multiple partner codes -- @1.1 Valid registrations  # features/vehicle_api.feature:61
+    Given Vehicle API client is initialized                                               # None
+    When I register VIN "KMUHCESC7RU179347" for partner "HBL4BP-006"                      # None
+    Then the API response status should be 200                                            # None
+
+  @api @regression @vehicle_registration
+  Scenario Outline: Register VINs for multiple partner codes -- @1.2 Valid registrations  # features/vehicle_api.feature:62
+    Given Vehicle API client is initialized                                               # None
+    When I register VIN "KM8JFCA14PU000001" for partner "HBL4BP-006"                      # None
+    Then the API response status should be 200                                            # None
+
+  @api @regression @vehicle_security @testrail_C448341
+  Scenario: Registration with invalid API key returns 401 or 403                             # features/vehicle_api.feature:69
+    Given Vehicle API client is initialized                                                  # None
+    When I register VIN "KMUHCESC7RU179347" for partner "HBL4BP-006" with an invalid API key # None
+    Then the API response status should indicate unauthorised                                # None
+
+  @api @regression @vehicle_validation @testrail_C448342
+  Scenario: Registration without transactionId returns 400                                          # features/vehicle_api.feature:78
+    Given Vehicle API client is initialized                                                         # None
+    When I register VIN "KMUHCESC7RU179347" for partner "HBL4BP-006" omitting field "transactionId" # None
+    Then the API response status should be 400                                                      # None
+
+  @api @regression @vehicle_validation @testrail_C448343
+  Scenario: Registration without partnerCode returns 400                                          # features/vehicle_api.feature:83
+    Given Vehicle API client is initialized                                                       # None
+    When I register VIN "KMUHCESC7RU179347" for partner "HBL4BP-006" omitting field "partnerCode" # None
+    Then the API response status should be 400                                                    # None
+
+  @api @regression @vehicle_validation @testrail_C448344
+  Scenario: Registration with empty VIN list returns 400       # features/vehicle_api.feature:88
+    Given Vehicle API client is initialized                    # None
+    When I register an empty VIN list for partner "HBL4BP-006" # None
+    Then the API response status should be 400                 # None
+
+  @api @performance @vehicle_registration
+  Scenario: Registration response time is within threshold           # features/vehicle_api.feature:97
+    Given Vehicle API client is initialized                          # None
+    When I register VIN "KMUHCESC7RU179347" for partner "HBL4BP-006" # None
+    Then the API response time should be under 5000 ms               # None
+

@@ -1,11 +1,16 @@
 """
 AI Test Generator
 =================
-Generates Gherkin BDD scenarios from one of three input sources:
+Generates Gherkin BDD scenarios from one of four input sources:
   1. A live page URL   — Playwright fetches the HTML, LLM writes UI scenarios.
   2. A cURL command    — parsed into method/url/headers/body, LLM writes API
                           scenarios in this project's vehicle_api.feature style.
-  3. A plaintext requirement — sent to the LLM as-is, LLM writes BDD scenarios.
+  3. A cURL command + a UI screenshot — the parsed request is combined with a
+                          vision-model read of the screenshot so the LLM can
+                          name real UI elements (buttons, field labels) in the
+                          Given/When steps while still asserting on the API
+                          response in Then steps.
+  4. A plaintext requirement — sent to the LLM as-is, LLM writes BDD scenarios.
 
 See docs/ai-test-generation-guide.md for the full guideline on writing good
 cURL/plaintext inputs and reviewing the generated output before committing it.
@@ -13,7 +18,8 @@ cURL/plaintext inputs and reviewing the generated output before committing it.
 Provider configuration (env vars):
     AI_PROVIDER   — anthropic | openai | stub  (default: anthropic)
     AI_API_KEY    — API key for the selected provider
-    AI_MODEL      — model override
+    AI_MODEL      — model override (use a vision-capable model for --screenshot,
+                    e.g. claude-3-5-sonnet-20241022 or gpt-4o)
 
 Usage (standalone CLI):
     python -m agent.ai.test_generator \\
@@ -27,6 +33,12 @@ Usage (standalone CLI):
         --tags api regression
 
     python -m agent.ai.test_generator \\
+        --curl 'curl -X POST https://api.example.com/register -H "x-api-key: secret" -d "{\\"vin\\":\\"ABC123\\"}"' \\
+        --screenshot reports/screenshots/register-form.png \\
+        --feature e2e/features/ai_generated_register.feature \\
+        --tags api regression
+
+    python -m agent.ai.test_generator \\
         --text "As a partner, I can register a vehicle by VIN and receive a transaction id" \\
         --feature e2e/features/ai_generated_register.feature
 
@@ -35,6 +47,12 @@ Usage (programmatic):
     gen = AITestGenerator()
     feature_text = gen.generate(url="https://example.com", tags=["smoke"])
     gen.save(feature_text, "e2e/features/ai_generated.feature")
+
+    feature_text = gen.generate_from_curl_and_screenshot(
+        curl_command='curl -X POST https://api.example.com/register -d "{\\"vin\\":\\"ABC123\\"}"',
+        screenshot_path="reports/screenshots/register-form.png",
+        tags=["api", "smoke"],
+    )
 """
 from __future__ import annotations
 
@@ -67,6 +85,26 @@ _SYSTEM_PROMPT_CURL = textwrap.dedent("""
     - A `Background:` step initialises the API client.
     - Scenarios assert on HTTP status code, JSON body validity, and any
       transaction/reference identifier in the response.
+    - Include one happy-path scenario, one validation-error scenario
+      (e.g. a missing required field returning 400), and one
+      authentication-failure scenario if the request carries credentials.
+    - Use Given/When/Then/And keywords correctly.
+    - Return ONLY valid Gherkin — no prose, no markdown fences.
+    - Tag each scenario with the tags provided.
+    - Any header value shown as "<redacted>" is a placeholder for a real
+      secret — never invent or echo a credential value in the scenarios.
+""").strip()
+
+_SYSTEM_PROMPT_CURL_SCREENSHOT = textwrap.dedent("""
+    You are a senior QA automation engineer who writes Gherkin BDD feature
+    files by combining a REST API request with a screenshot of the UI that
+    triggers it, matching this project's existing test style:
+    - A `Background:` step initialises the API client.
+    - Use the screenshot to identify real UI elements — button labels, field
+      names, form titles — and phrase Given/When steps around that actual
+      user flow instead of generic placeholders.
+    - Then steps assert on the API side: HTTP status code, JSON body
+      validity, and any transaction/reference identifier in the response.
     - Include one happy-path scenario, one validation-error scenario
       (e.g. a missing required field returning 400), and one
       authentication-failure scenario if the request carries credentials.
@@ -157,6 +195,50 @@ class AITestGenerator:
 
         if not re.search(r"^\s*Feature:", gherkin, re.MULTILINE):
             gherkin = f"Feature: Auto-generated API tests for {parsed['url']}\n\n{gherkin}"
+
+        log_success(f"Generated {self._count_scenarios(gherkin)} scenario(s)")
+        return gherkin
+
+    def generate_from_curl_and_screenshot(
+        self,
+        curl_command: str,
+        screenshot_path: str,
+        tags: list[str] | None = None,
+    ) -> str:
+        """
+        Parse a cURL command (method/url/headers/body — secrets redacted)
+        and combine it with a UI screenshot of the page that triggers the
+        request, so the LLM can name real UI elements in Given/When steps
+        while still asserting on the API response in Then steps.
+        """
+        if not Path(screenshot_path).is_file():
+            raise FileNotFoundError(f"Screenshot not found: {screenshot_path}")
+
+        tags = tags or ["api", "ai_generated"]
+        tag_line = "  ".join(f"@{t.lstrip('@')}" for t in tags)
+
+        parsed = parse_curl(curl_command)
+        log_info_emoji("🧾", f"Parsed cURL: {parsed['method']} {parsed['url']}")
+        log_info_emoji("🖼️", f"Attaching screenshot: {screenshot_path}")
+
+        prompt = self._build_curl_prompt(parsed, tag_line) + (
+            "\n\nA screenshot of the UI that triggers this request is attached. "
+            "Use it to name real UI elements (labels, buttons, field names) "
+            "in the Given/When steps."
+        )
+        log_info_emoji(
+            "🧠", f"Generating UI+API scenarios via {self._client.provider_name} …"
+        )
+        gherkin = self._client.generate(
+            prompt=prompt,
+            system=_SYSTEM_PROMPT_CURL_SCREENSHOT,
+            images=[screenshot_path],
+            temperature=0.2,
+        )
+        gherkin = gherkin.strip()
+
+        if not re.search(r"^\s*Feature:", gherkin, re.MULTILINE):
+            gherkin = f"Feature: Auto-generated UI+API tests for {parsed['url']}\n\n{gherkin}"
 
         log_success(f"Generated {self._count_scenarios(gherkin)} scenario(s)")
         return gherkin
@@ -333,24 +415,35 @@ def parse_curl(curl_command: str) -> dict:
 
 def _parse_args():
     p = argparse.ArgumentParser(
-        description="Generate Gherkin from a live page, a cURL command, or a plaintext requirement"
+        description="Generate Gherkin from a live page, a cURL command "
+                     "(optionally paired with a UI screenshot), or a plaintext requirement"
     )
     source = p.add_mutually_exclusive_group(required=True)
     source.add_argument("--url", help="Page URL to analyse")
     source.add_argument("--curl", help="A cURL command describing an API request")
     source.add_argument("--text", help="A plaintext requirement description")
+    p.add_argument("--screenshot",
+                   help="Path to a UI screenshot to combine with --curl for a "
+                        "combined UI+API feature (requires --curl)")
     p.add_argument("--feature", default="e2e/features/ai_generated.feature",
                    help="Output .feature file path")
     p.add_argument("--tags", nargs="*", default=["ai_generated", "smoke"],
                    help="Tags to apply to all generated scenarios")
-    return p.parse_args()
+    args = p.parse_args()
+    if args.screenshot and not args.curl:
+        p.error("--screenshot requires --curl")
+    return args
 
 
 if __name__ == "__main__":
     args = _parse_args()
     try:
         gen = AITestGenerator()
-        if args.curl:
+        if args.curl and args.screenshot:
+            gherkin = gen.generate_from_curl_and_screenshot(
+                args.curl, args.screenshot, tags=args.tags
+            )
+        elif args.curl:
             gherkin = gen.generate_from_curl(args.curl, tags=args.tags)
         elif args.text:
             gherkin = gen.generate_from_text(args.text, tags=args.tags)

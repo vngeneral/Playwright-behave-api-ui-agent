@@ -3,7 +3,9 @@ Unit tests for agent/ai/test_generator.py
 No network calls, no LLM calls — parse_curl is pure, and generate_from_*
 methods are tested with a mocked LLM client.
 """
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from agent.ai.test_generator import AITestGenerator, parse_curl
@@ -137,6 +139,76 @@ class TestGenerateFromCurl(unittest.TestCase):
     def test_applies_tags_to_prompt(self):
         gen, mock_client = self._make_generator()
         gen.generate_from_curl('curl https://api.example.com/vehicles', tags=["api", "regression"])
+        prompt = mock_client.generate.call_args.kwargs["prompt"]
+        self.assertIn("@api", prompt)
+        self.assertIn("@regression", prompt)
+
+
+class TestGenerateFromCurlAndScreenshot(unittest.TestCase):
+    """generate_from_curl_and_screenshot must attach the image and never leak secrets."""
+
+    def _make_generator(self, response_text="Feature: Stub\n\nScenario: x"):
+        with patch("agent.ai.test_generator.LLMClient") as mock_llm_client:
+            mock_client = MagicMock()
+            mock_client.provider_name = "stub"
+            mock_client.generate.return_value = response_text
+            mock_llm_client.from_config.return_value = mock_client
+            gen = AITestGenerator()
+        return gen, mock_client
+
+    def _make_screenshot(self) -> str:
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp.write(b"fake-png-bytes")
+        tmp.close()
+        self.addCleanup(lambda: Path(tmp.name).unlink(missing_ok=True))
+        return tmp.name
+
+    def test_raises_when_screenshot_missing(self):
+        gen, _ = self._make_generator()
+        with self.assertRaises(FileNotFoundError):
+            gen.generate_from_curl_and_screenshot(
+                'curl https://api.example.com/vehicles',
+                screenshot_path="/does/not/exist.png",
+            )
+
+    def test_passes_screenshot_path_as_image(self):
+        gen, mock_client = self._make_generator()
+        screenshot = self._make_screenshot()
+        gen.generate_from_curl_and_screenshot(
+            'curl -X POST https://api.example.com/register -d \'{"vin":"ABC123"}\'',
+            screenshot_path=screenshot,
+        )
+        images = mock_client.generate.call_args.kwargs["images"]
+        self.assertEqual(images, [screenshot])
+
+    def test_prompt_contains_redacted_placeholder_not_real_secret(self):
+        gen, mock_client = self._make_generator()
+        screenshot = self._make_screenshot()
+        gen.generate_from_curl_and_screenshot(
+            'curl -X POST https://api.example.com/register '
+            '-H "x-api-key: real-secret-value" -d \'{"vin":"ABC123"}\'',
+            screenshot_path=screenshot,
+        )
+        prompt = mock_client.generate.call_args.kwargs["prompt"]
+        self.assertIn("<redacted>", prompt)
+        self.assertNotIn("real-secret-value", prompt)
+
+    def test_adds_feature_line_if_missing(self):
+        gen, _ = self._make_generator(response_text="Scenario: no feature line here")
+        screenshot = self._make_screenshot()
+        gherkin = gen.generate_from_curl_and_screenshot(
+            'curl https://api.example.com/vehicles', screenshot_path=screenshot
+        )
+        self.assertTrue(gherkin.startswith("Feature:"))
+
+    def test_applies_tags_to_prompt(self):
+        gen, mock_client = self._make_generator()
+        screenshot = self._make_screenshot()
+        gen.generate_from_curl_and_screenshot(
+            'curl https://api.example.com/vehicles',
+            screenshot_path=screenshot,
+            tags=["api", "regression"],
+        )
         prompt = mock_client.generate.call_args.kwargs["prompt"]
         self.assertIn("@api", prompt)
         self.assertIn("@regression", prompt)

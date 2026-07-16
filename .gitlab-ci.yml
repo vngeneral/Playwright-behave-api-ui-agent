@@ -1,110 +1,195 @@
-###############################################################################
-# GitLab CI — Playwright + Behave + Allure
-###############################################################################
-# Stages run in order; each stage blocks the next on failure.
-# Allure results from each matrix job are merged in the 'report' stage.
-###############################################################################
+name: Playwright + Behave CI
 
-stages:
-  - lint
-  - test
-  - report
+# ── Triggers ─────────────────────────────────────────────────────────────────
+# Push / PR / schedule triggers are intentionally DISABLED.
+# Re-enable them (uncomment) once the CI environment is fully configured:
+#   - Playwright browsers installable in the runner
+#   - VEHICLE_API_KEY, TEAMS_WEBHOOK_URL, etc. set as repo secrets
+#
+# on:
+#   push:
+#     branches: [main, develop]
+#   pull_request:
+#     branches: [main]
+#   schedule:
+#     - cron: "0 2 * * *"   # nightly smoke run at 02:00 UTC
 
-variables:
-  HEADLESS: "True"
-  ENV: "dev"
-  NOTIFY_ON_FAILURE: "true"
-  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip_cache"
-  # Notification secrets — set in GitLab → Settings → CI/CD → Variables (masked)
-  # SLACK_WEBHOOK_URL, TEAMS_WEBHOOK_URL, WHATSAPP_API_TOKEN,
-  # WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_NOTIFY_TO
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: "Behave tags to run (e.g. @smoke)"
+        required: false
+        default: ""
+      browser:
+        description: "Browser"
+        required: false
+        default: "chromium"
+        type: choice
+        options: [chromium, firefox, webkit]
+      environment:
+        description: "Target environment"
+        required: false
+        default: "dev"
+        type: choice
+        options: [dev, staging, prod]
 
-cache:
-  key: "$CI_COMMIT_REF_SLUG"
-  paths:
-    - .pip_cache/
+# Cancel in-progress runs on the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
-# ── Lint ─────────────────────────────────────────────────────────────────────
-lint:
-  stage: lint
-  image: python:3.12-slim
-  before_script:
-    - pip install ruff --quiet
-  script:
-    - ruff check . --output-format=gitlab
-  allow_failure: false
+env:
+  PYTHON_VERSION: "3.12"
 
-# ── Test matrix ───────────────────────────────────────────────────────────────
-.test_base: &test_base
-  stage: test
-  image: mcr.microsoft.com/playwright/python:v1.53.0-jammy
-  before_script:
-    - pip install -r resources/requirements.txt --quiet
-    - playwright install $BROWSER
-  script:
-    - |
-      TAG_ARGS=""
-      if [ -n "$TAGS" ]; then
-        for tag in $TAGS; do
-          TAG_ARGS="$TAG_ARGS --tags $tag"
-        done
-      fi
-      python run_tests.py \
-        --headless \
-        --browser $BROWSER \
-        --env $ENV \
-        --parallel \
-        --workers 2 \
-        $TAG_ARGS
-  artifacts:
-    when: always
-    paths:
-      - reports/allure-results/
-      - reports/screenshots/
-      - reports/metrics/
-    expire_in: 7 days
-  interruptible: true
+jobs:
+  # ── Lint & static checks ──────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install flake8 --quiet
+      - run: flake8 . --count --max-line-length=120 --extend-ignore=E501,W503 --statistics
 
-test:chromium:
-  <<: *test_base
-  variables:
-    BROWSER: chromium
+  # ── Unit tests (agent/ — pytest) ────────────────────────────────────────────
+  unit-tests:
+    name: Unit tests (agent/)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r resources/requirements-dev.txt
+      - name: Run pytest
+        run: python -m pytest tests/ -v
 
-test:firefox:
-  <<: *test_base
-  variables:
-    BROWSER: firefox
+  # ── Test matrix ───────────────────────────────────────────────────────────
+  test:
+    name: Test [${{ matrix.browser }}] [${{ matrix.shard }}]
+    runs-on: ubuntu-latest
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+        shard: [1, 2]          # split feature files into 2 shards per browser
 
-# ── Report ────────────────────────────────────────────────────────────────────
-report:
-  stage: report
-  image: python:3.12-slim
-  needs:
-    - test:chromium
-    - test:firefox
-  when: always
-  before_script:
-    - apt-get update -qq && apt-get install -y -qq default-jre-headless wget
-    - |
-      wget -q https://github.com/allure-framework/allure2/releases/download/2.27.0/allure-2.27.0.tgz
-      tar -xzf allure-2.27.0.tgz -C /opt
-      ln -s /opt/allure-2.27.0/bin/allure /usr/local/bin/allure
-  script:
-    - allure generate reports/allure-results --clean -o reports/allure-html
-  artifacts:
-    paths:
-      - reports/allure-html/
-    expire_in: 30 days
+    steps:
+      - uses: actions/checkout@v4
 
-# Optional: publish to GitLab Pages
-pages:
-  stage: report
-  needs: [report]
-  when: on_success
-  only:
-    - main
-  script:
-    - mv reports/allure-html public
-  artifacts:
-    paths:
-      - public
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r resources/requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install ${{ matrix.browser }} --with-deps
+
+      - name: Install Allure CLI
+        run: |
+          wget -q https://github.com/allure-framework/allure2/releases/download/2.27.0/allure-2.27.0.tgz
+          sudo tar -xzf allure-2.27.0.tgz -C /opt
+          sudo ln -s /opt/allure-2.27.0/bin/allure /usr/local/bin/allure
+
+      - name: Determine feature shards
+        id: shard
+        run: |
+          FILES=(e2e/features/*.feature)
+          TOTAL=${#FILES[@]}
+          SHARD_IDX=$(( ${{ matrix.shard }} - 1 ))
+          SHARD_FILES=()
+          for (( i=SHARD_IDX; i<TOTAL; i+=2 )); do
+            SHARD_FILES+=("${FILES[$i]}")
+          done
+          echo "files=${SHARD_FILES[*]}" >> $GITHUB_OUTPUT
+
+      - name: Run Behave tests
+        env:
+          HEADLESS: "True"
+          BROWSER: ${{ matrix.browser }}
+          ENV: ${{ github.event.inputs.environment || 'dev' }}
+          NOTIFY_ON_FAILURE: "true"
+          SLACK_WEBHOOK_URL:                  ${{ secrets.SLACK_WEBHOOK_URL }}
+          TEAMS_WEBHOOK_URL:                  ${{ secrets.TEAMS_WEBHOOK_URL }}
+          WHATSAPP_API_TOKEN:                 ${{ secrets.WHATSAPP_API_TOKEN }}
+          WHATSAPP_PHONE_NUMBER_ID:           ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
+          WHATSAPP_NOTIFY_TO:                 ${{ secrets.WHATSAPP_NOTIFY_TO }}
+        run: |
+          TAGS="${{ github.event.inputs.tags }}"
+          TAG_ARGS=""
+          if [ -n "$TAGS" ]; then
+            TAG_ARGS="--tags $TAGS"
+          fi
+          python e2e/run_tests.py \
+            --headless \
+            --browser ${{ matrix.browser }} \
+            $TAG_ARGS \
+            ${{ steps.shard.outputs.files }}
+
+      - name: Upload Allure results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results-${{ matrix.browser }}-shard${{ matrix.shard }}
+          path: reports/allure-results/
+          retention-days: 7
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ matrix.browser }}-shard${{ matrix.shard }}
+          path: reports/screenshots/
+          retention-days: 3
+
+  # ── Allure report publishing ───────────────────────────────────────────────
+  report:
+    name: Publish Allure Report
+    runs-on: ubuntu-latest
+    needs: test
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all Allure results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: allure-results-*
+          merge-multiple: true
+          path: reports/allure-results/
+
+      - name: Install Allure CLI
+        run: |
+          wget -q https://github.com/allure-framework/allure2/releases/download/2.27.0/allure-2.27.0.tgz
+          sudo tar -xzf allure-2.27.0.tgz -C /opt
+          sudo ln -s /opt/allure-2.27.0/bin/allure /usr/local/bin/allure
+
+      - name: Generate Allure HTML report
+        run: allure generate reports/allure-results --clean -o reports/allure-html
+
+      - name: Publish to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: reports/allure-html
+          destination_dir: allure-report
+
+      - name: Upload Allure HTML artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-html-report
+          path: reports/allure-html/
+          retention-days: 14

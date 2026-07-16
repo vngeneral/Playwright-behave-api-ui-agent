@@ -4,7 +4,7 @@ Feature: Vehicle Registration API — Platform Partner BL4B
   So that vehicle eligibility is accurately maintained
 
   Background:
-    Given the Vehicle API client is initialised
+    Given Vehicle API client is initialized
 
   # ────────────────────────────────────────────────────────────────────────────
   # Registration — smoke
