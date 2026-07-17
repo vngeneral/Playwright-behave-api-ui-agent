@@ -2,7 +2,7 @@
 TestRail Integration — Unit Tests
 ===================================
 Coverage areas:
-  1. Groovy parity — result_mapper logic matches the original JMeter sampler
+  1. Result mapper  — Behave scenario → status id + failure-cause comment
   2. PendingStore   — lifecycle: add → get_pending → mark_pushed → clear
   3. TestRailClient — HTTP request shape and error handling (no live call)
   4. Command parser — !testrail commands recognised and routed correctly
@@ -13,7 +13,6 @@ Run:
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
 import threading
@@ -26,170 +25,46 @@ from unittest.mock import MagicMock, patch
 # Make sure project root is on the path when running from tests/
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agent.testrail.result_mapper import (
-    TESTRAIL_FAILED,
-    TESTRAIL_PASSED,
-    StepResult,
-    TestRailResult,
-    build_step_comment,
-    extract_case_ids,
-    find_failed_steps,
-    from_behave_scenario,
-    from_step_results,
-    is_passing_status_code,
-)
-from agent.testrail.pending_store import (
-    STATUS_PENDING,
-    STATUS_PUSHED,
-    PendingStore,
+from agent.integrations.command_parser import parse_command
+from agent.integrations.testrail_command import (
+    _parse_push_args,
+    handle_testrail_command,
 )
 from agent.testrail.client import (
     TestRailAPIError,
     TestRailClient,
     TestRailConfigError,
 )
-from agent.integrations.command_parser import parse_command
-from agent.integrations.testrail_command import (
-    handle_testrail_command,
-    _parse_push_args,
+from agent.testrail.pending_store import (
+    STATUS_PENDING,
+    STATUS_PUSHED,
+    PendingStore,
+)
+from agent.testrail.result_mapper import (
+    TESTRAIL_FAILED,
+    TESTRAIL_PASSED,
+    TestRailResult,
+    extract_case_ids,
+    from_behave_scenario,
 )
 
-
 # ===========================================================================
-# 1 — Groovy parity: result_mapper
+# 1 — Result mapper: Behave scenario → TestRail result
 # ===========================================================================
-
-
-class TestIsPassingStatusCode(unittest.TestCase):
-    """Groovy: code == 200 or code == 204 → pass; anything else → fail."""
-
-    def test_200_passes(self):
-        self.assertTrue(is_passing_status_code("200"))
-
-    def test_204_passes(self):
-        self.assertTrue(is_passing_status_code("204"))
-
-    def test_201_fails(self):
-        self.assertFalse(is_passing_status_code("201"))
-
-    def test_400_fails(self):
-        self.assertFalse(is_passing_status_code("400"))
-
-    def test_500_fails(self):
-        self.assertFalse(is_passing_status_code("500"))
-
-    def test_non_numeric_fails(self):
-        # Groovy: non-numeric statusCode → treated as failure
-        self.assertFalse(is_passing_status_code("N/A"))
-        self.assertFalse(is_passing_status_code(""))
-        self.assertFalse(is_passing_status_code(None))   # type: ignore[arg-type]
-
-    def test_integer_input_passes(self):
-        # Should also work when caller passes int instead of str
-        self.assertTrue(is_passing_status_code(200))     # type: ignore[arg-type]
-
-
-class TestFindFailedSteps(unittest.TestCase):
-    def test_all_passing_returns_empty(self):
-        steps = [
-            StepResult("step1", "200"),
-            StepResult("step2", "204"),
-        ]
-        self.assertEqual(find_failed_steps(steps), [])
-
-    def test_one_failed_returned(self):
-        steps = [
-            StepResult("step1", "200"),
-            StepResult("step2", "500", response_data="Internal Server Error"),
-        ]
-        failed = find_failed_steps(steps)
-        self.assertEqual(len(failed), 1)
-        self.assertEqual(failed[0].name, "step2")
-
-    def test_non_numeric_returned_as_failed(self):
-        steps = [StepResult("step1", "N/A")]
-        self.assertEqual(len(find_failed_steps(steps)), 1)
-
-
-class TestBuildStepComment(unittest.TestCase):
-    """Mirrors the Groovy comment-building logic."""
-
-    def test_all_pass_returns_passed_status(self):
-        steps = [StepResult("Register vehicle", "200", request_data="account:HBL4BP-006")]
-        comment, status_id = build_step_comment(steps)
-        self.assertEqual(status_id, TESTRAIL_PASSED)
-        self.assertIn("All steps are good", comment)
-
-    def test_failed_step_returns_failed_status(self):
-        steps = [
-            StepResult("Register vehicle", "200"),
-            StepResult("Get status", "500", response_data="Server Error"),
-        ]
-        comment, status_id = build_step_comment(steps)
-        self.assertEqual(status_id, TESTRAIL_FAILED)
-        self.assertIn("Get status", comment)
-        self.assertIn("500", comment)
-        self.assertIn("Server Error", comment)
-
-    def test_account_context_in_failed_comment(self):
-        steps = [StepResult("step", "404")]
-        comment, _ = build_step_comment(steps, account_context="acct:HBL4BP-006")
-        self.assertIn("acct:HBL4BP-006", comment)
-
-    def test_non_numeric_status_code_message(self):
-        steps = [StepResult("step", "N/A", response_data="connection refused")]
-        comment, status_id = build_step_comment(steps)
-        self.assertEqual(status_id, TESTRAIL_FAILED)
-        self.assertIn("non-numeric", comment)
-        self.assertIn("N/A", comment)
-
-    def test_empty_steps_returns_passed(self):
-        comment, status_id = build_step_comment([])
-        self.assertEqual(status_id, TESTRAIL_PASSED)
-
-
-class TestFromStepResults(unittest.TestCase):
-    def test_all_pass_produces_passed_result(self):
-        steps = [StepResult("Register", "200"), StepResult("Check", "204")]
-        result = from_step_results("448337", steps, scenario_name="My scenario")
-        self.assertEqual(result.case_id, "448337")
-        self.assertEqual(result.status_id, TESTRAIL_PASSED)
-        self.assertEqual(result.scenario_name, "My scenario")
-
-    def test_one_fail_produces_failed_result(self):
-        steps = [StepResult("Register", "200"), StepResult("Check", "503")]
-        result = from_step_results("448337", steps)
-        self.assertEqual(result.status_id, TESTRAIL_FAILED)
-
-    def test_step_details_populated(self):
-        steps = [StepResult("Register", "200", request_data="body", response_data="ok")]
-        result = from_step_results("448337", steps)
-        self.assertEqual(len(result.step_details), 1)
-        self.assertTrue(result.step_details[0]["passed"])
-
-    def test_to_api_dict_shape(self):
-        result = TestRailResult(case_id="448337", status_id=1, comment="ok", elapsed="5s")
-        d = result.to_api_dict()
-        self.assertEqual(d["case_id"], 448337)
-        self.assertEqual(d["status_id"], 1)
-        self.assertIn("elapsed", d)
-
-    def test_to_api_dict_no_elapsed(self):
-        result = TestRailResult(case_id="448337", status_id=1, comment="ok")
-        d = result.to_api_dict()
-        self.assertNotIn("elapsed", d)
 
 
 class TestFromBehaveScenario(unittest.TestCase):
     """from_behave_scenario() — maps a Behave-style scenario to TestRailResult."""
 
-    def _make_scenario(self, status="passed", steps=None, name="My Scenario", tags=None):
+    def _make_scenario(self, status="passed", steps=None, name="My Scenario",
+                       tags=None, error_message=None):
         scenario = SimpleNamespace(
             name=name,
             status=status,
             tags=tags or [],
             duration=3.5,
             steps=[],
+            error_message=error_message,
         )
         if steps:
             for step_status, step_name, err in steps:
@@ -226,6 +101,84 @@ class TestFromBehaveScenario(unittest.TestCase):
         self.assertEqual(result.status_id, TESTRAIL_FAILED)
         self.assertIn("when I break it", result.comment)
         self.assertIn("AssertionError", result.comment)
+
+    def test_skipped_and_untested_steps_not_reported_as_failed(self):
+        """Behave marks steps after a failure 'skipped' and steps never run
+        'untested' — neither is a failure and neither may bury the real error."""
+        scenario = self._make_scenario(
+            status="failed",
+            steps=[
+                ("passed", "given something", None),
+                ("failed", "when I break it", "AssertionError: expected 200 got 500"),
+                ("skipped", "then never reached", None),
+                ("untested", "and also never reached", None),
+            ]
+        )
+        result = from_behave_scenario(scenario, "448337")
+        self.assertIn("AssertionError: expected 200 got 500", result.comment)
+        self.assertNotIn("never reached", result.comment)
+        self.assertNotIn("no error message", result.comment)
+
+    def test_hook_failure_message_included_in_comment(self):
+        """before_scenario hook error: all steps untested, the cause lives in
+        scenario.error_message — it must reach the TestRail comment."""
+        scenario = self._make_scenario(
+            status="failed",
+            error_message="HOOK-ERROR in before_scenario: RuntimeError: browser crashed",
+            steps=[
+                ("untested", "given a step that never ran", None),
+                ("untested", "when another that never ran", None),
+            ]
+        )
+        result = from_behave_scenario(scenario, "448337")
+        self.assertEqual(result.status_id, TESTRAIL_FAILED)
+        self.assertIn("HOOK-ERROR in before_scenario", result.comment)
+        self.assertIn("browser crashed", result.comment)
+        self.assertNotIn("never ran", result.comment)
+        self.assertNotIn("All steps are good", result.comment)
+
+    def test_undefined_step_labelled_in_comment(self):
+        scenario = self._make_scenario(
+            status="failed",
+            steps=[
+                ("passed", "given something", None),
+                ("undefined", "when a step nobody defined", None),
+            ]
+        )
+        result = from_behave_scenario(scenario, "448337")
+        self.assertIn("when a step nobody defined", result.comment)
+        self.assertIn("undefined step — no matching step definition found", result.comment)
+
+    def test_failed_scenario_without_any_error_never_says_all_good(self):
+        scenario = self._make_scenario(
+            status="failed",
+            steps=[("untested", "given a step", None)],
+        )
+        result = from_behave_scenario(scenario, "448337")
+        self.assertEqual(result.status_id, TESTRAIL_FAILED)
+        self.assertNotIn("All steps are good", result.comment)
+        self.assertIn("no step error was recorded", result.comment)
+
+    def test_step_and_hook_errors_both_included(self):
+        scenario = self._make_scenario(
+            status="failed",
+            error_message="HOOK-ERROR in after_step: cleanup exploded",
+            steps=[("failed", "when I break it", "AssertionError: boom")],
+        )
+        result = from_behave_scenario(scenario, "448337")
+        self.assertIn("AssertionError: boom", result.comment)
+        self.assertIn("cleanup exploded", result.comment)
+
+    def test_huge_error_message_truncated(self):
+        dom_dump = "TimeoutError: waiting for locator\n" + ("<div>" * 2000)
+        scenario = self._make_scenario(
+            status="failed",
+            steps=[("failed", "when the page hangs", dom_dump)],
+        )
+        result = from_behave_scenario(scenario, "448337")
+        self.assertIn("TimeoutError", result.comment)
+        self.assertIn("[truncated]", result.comment)
+        self.assertLess(len(result.comment), 2500)
 
     def test_elapsed_set(self):
         scenario = self._make_scenario()
@@ -293,10 +246,10 @@ class TestPendingStore(unittest.TestCase):
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0]["case_id"], "448338")
 
-    def test_mark_all_pushed(self):
+    def test_mark_pushed_all_case_ids(self):
         self.store.add(self._make_result("448337"))
         self.store.add(self._make_result("448338"))
-        self.store.mark_all_pushed()
+        self.store.mark_pushed(["448337", "448338"])
         self.assertEqual(self.store.get_pending(), [])
         all_entries = self.store.get_all()
         self.assertTrue(all(e["status"] == STATUS_PUSHED for e in all_entries))
@@ -305,7 +258,7 @@ class TestPendingStore(unittest.TestCase):
         self.store.add(self._make_result())
         self.store.clear()
         self.assertEqual(self.store.get_all(), [])
-        self.assertFalse(self.store.has_pending())
+        self.assertEqual(self.store.get_pending(), [])
 
     def test_get_status_returns_counts(self):
         self.store.add(self._make_result("448337"))
@@ -335,14 +288,6 @@ class TestPendingStore(unittest.TestCase):
             t.join()
         all_entries = self.store.get_all()
         self.assertEqual(len(all_entries), 20)
-
-    def test_has_pending_true(self):
-        self.store.add(self._make_result())
-        self.assertTrue(self.store.has_pending())
-
-    def test_has_pending_false_when_empty(self):
-        self.assertFalse(self.store.has_pending())
-
 
 # ===========================================================================
 # 3 — TestRailClient HTTP shape
@@ -420,17 +365,6 @@ class TestTestRailClientHTTP(unittest.TestCase):
             self.assertIn("results", payload)
             self.assertEqual(payload["results"][0]["case_id"], 1)
 
-    def test_get_run_calls_correct_url(self):
-        mock_resp = MagicMock()
-        mock_resp.ok = True
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"id": 123}
-
-        with patch.object(self.client._session, "get", return_value=mock_resp) as mock_get:
-            self.client.get_run(run_id=123)
-            url = mock_get.call_args[0][0]
-            self.assertIn("/api/v2/get_run/123", url)
-
     def test_non_200_raises_testrail_api_error(self):
         mock_resp = MagicMock()
         mock_resp.ok = False
@@ -446,6 +380,120 @@ class TestTestRailClientHTTP(unittest.TestCase):
         with TestRailClient("https://t.io", "u", "k") as client:
             self.assertIsNotNone(client)
         # close() should not raise
+
+    def test_add_case_calls_correct_url_with_title_and_steps(self):
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"id": 900001}
+
+        with patch.object(self.client._session, "post", return_value=mock_resp) as mock_post:
+            result = self.client.add_case(
+                section_id=42, title="Successful registration", custom_steps="When x\nThen y"
+            )
+            url = mock_post.call_args[0][0]
+            payload = mock_post.call_args[1]["json"]
+            self.assertIn("/api/v2/add_case/42", url)
+            self.assertEqual(payload["title"], "Successful registration")
+            self.assertEqual(payload["custom_steps"], "When x\nThen y")
+            self.assertEqual(result["id"], 900001)
+
+    def test_add_case_omits_custom_steps_when_none(self):
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"id": 1}
+
+        with patch.object(self.client._session, "post", return_value=mock_resp) as mock_post:
+            self.client.add_case(section_id=42, title="T")
+            payload = mock_post.call_args[1]["json"]
+            self.assertNotIn("custom_steps", payload)
+
+    def _resp(self, status_code=200, json_body=None, text=""):
+        resp = MagicMock()
+        resp.ok = status_code < 400
+        resp.status_code = status_code
+        resp.text = text
+        resp.json.return_value = json_body or {}
+        return resp
+
+    def test_add_case_falls_back_to_separated_steps_on_400(self):
+        """Text-template field rejected → whole Gherkin body goes into the
+        first step of custom_steps_separated (Steps template)."""
+        responses = [
+            self._resp(400, text="Field :custom_steps is not a valid field"),
+            self._resp(200, {"id": 900002}),
+        ]
+        with patch.object(
+            self.client._session, "post", side_effect=responses
+        ) as mock_post:
+            result = self.client.add_case(
+                section_id=42, title="T", custom_steps="When x\nThen y"
+            )
+            self.assertEqual(mock_post.call_count, 2)
+            retry_payload = mock_post.call_args_list[1][1]["json"]
+            self.assertEqual(
+                retry_payload,
+                {"title": "T",
+                 "custom_steps_separated": [{"content": "When x\nThen y"}]},
+            )
+            self.assertEqual(result["id"], 900002)
+
+    def test_add_case_falls_back_to_title_only_when_both_step_formats_rejected(self):
+        responses = [
+            self._resp(400, text="Field :custom_steps is not a valid field"),
+            self._resp(400, text="Field :custom_steps_separated is not a valid field"),
+            self._resp(200, {"id": 900003}),
+        ]
+        with patch.object(
+            self.client._session, "post", side_effect=responses
+        ) as mock_post:
+            result = self.client.add_case(section_id=42, title="T", custom_steps="When x")
+            self.assertEqual(mock_post.call_count, 3)
+            final_payload = mock_post.call_args_list[2][1]["json"]
+            self.assertEqual(final_payload, {"title": "T"})
+            self.assertEqual(result["id"], 900003)
+
+    def test_add_case_raises_when_all_payload_variants_rejected(self):
+        responses = [self._resp(400, text="bad")] * 3
+        with patch.object(
+            self.client._session, "post", side_effect=responses
+        ) as mock_post:
+            with self.assertRaises(TestRailAPIError) as ctx:
+                self.client.add_case(section_id=42, title="T", custom_steps="When x")
+            self.assertEqual(mock_post.call_count, 3)
+            self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_add_case_non_400_error_raises_immediately_without_fallback(self):
+        """Auth/permission failures must not burn retries on payload variants."""
+        with patch.object(
+            self.client._session, "post",
+            return_value=self._resp(403, text="No access to project"),
+        ) as mock_post:
+            with self.assertRaises(TestRailAPIError) as ctx:
+                self.client.add_case(section_id=42, title="T", custom_steps="When x")
+            self.assertEqual(mock_post.call_count, 1)
+            self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_add_case_400_without_steps_raises(self):
+        bad_resp = MagicMock()
+        bad_resp.ok = False
+        bad_resp.status_code = 400
+        bad_resp.text = "No access to section"
+
+        with patch.object(self.client._session, "post", return_value=bad_resp):
+            with self.assertRaises(TestRailAPIError) as ctx:
+                self.client.add_case(section_id=42, title="T")
+            self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_default_section_id_from_env(self):
+        with patch.dict(os.environ, {"TESTRAIL_SECTION_ID": "77"}):
+            self.assertEqual(TestRailClient.default_section_id(), 77)
+
+    def test_default_section_id_none_when_unset(self):
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop("TESTRAIL_SECTION_ID", None)
+            self.assertIsNone(TestRailClient.default_section_id())
 
 
 # ===========================================================================
@@ -559,7 +607,7 @@ class TestTestrailCommandHandler(unittest.TestCase):
         self._add_result()
         resp = handle_testrail_command("!testrail discard")
         self.assertIn("1", resp)
-        self.assertFalse(self._store.has_pending())
+        self.assertEqual(self._store.get_pending(), [])
 
     def test_discard_empty_queue(self):
         resp = handle_testrail_command("!testrail discard")
@@ -596,7 +644,7 @@ class TestTestrailCommandHandler(unittest.TestCase):
              patch("agent.integrations.testrail_command.TestRailClient.default_run_id", return_value=1):
             handle_testrail_command("!testrail push")
 
-        self.assertFalse(self._store.has_pending())
+        self.assertEqual(self._store.get_pending(), [])
 
     def test_push_missing_config(self):
         self._add_result()

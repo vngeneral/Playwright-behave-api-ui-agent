@@ -39,7 +39,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -66,7 +66,7 @@ class PendingStore:
         store = PendingStore()             # uses default path
         store.add(testrail_result)         # queue a result after a scenario
         items = store.get_pending()        # preview — returns list of dicts
-        store.mark_all_pushed()            # after successful push
+        store.mark_pushed(["448337"])      # after successful push
         store.clear()                      # discard everything
     """
 
@@ -92,25 +92,12 @@ class PendingStore:
             data["results"].append(entry)
             self._save(data)
 
-    def mark_all_pushed(self) -> None:
-        """
-        Update status of all pending_review entries to 'pushed'.
-
-        Called after a successful ``!testrail push`` command.
-        """
-        with self._lock:
-            data = self._load()
-            for entry in data["results"]:
-                if entry.get("status") == STATUS_PENDING:
-                    entry["status"] = STATUS_PUSHED
-                    entry["pushed_at"] = _now_iso()
-            self._save(data)
-
     def mark_pushed(self, case_ids: list[str]) -> None:
         """
-        Mark specific case IDs as pushed.
+        Mark the given case IDs as pushed.
 
-        Called when ``!testrail push --case N`` targets individual cases.
+        Called after every successful ``!testrail push`` with the case IDs
+        that were actually submitted (all pending, or the ``--case N`` subset).
         """
         with self._lock:
             data = self._load()
@@ -168,10 +155,6 @@ class PendingStore:
             "pending":       pending,
         }
 
-    def has_pending(self) -> bool:
-        """Return True if there are any pending_review entries."""
-        return bool(self.get_pending())
-
     # ------------------------------------------------------------------
     # Private
     # ------------------------------------------------------------------
@@ -184,7 +167,7 @@ class PendingStore:
         if not self._path.exists():
             return {"results": []}
         try:
-            with open(self._path, "r", encoding="utf-8") as fh:
+            with open(self._path, encoding="utf-8") as fh:
                 data = json.load(fh)
             if not isinstance(data.get("results"), list):
                 return {"results": []}
@@ -239,4 +222,4 @@ def get_default_store() -> PendingStore:
 # ---------------------------------------------------------------------------
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()

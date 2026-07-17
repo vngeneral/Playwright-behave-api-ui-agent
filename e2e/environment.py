@@ -88,7 +88,6 @@ except ImportError:
 
     class _NoopHealer:
         def heal_selector(self, *_, **__): return ""
-        def stop_model(self): pass
 
     class _NoopPerfPlugin:
         def before_scenario(self, *_): pass
@@ -104,7 +103,6 @@ except ImportError:
 
     class _NoopStore:
         def add(self, *_): pass
-        def has_pending(self): return False
 
 # ── Performance plugin (e2e-local) ────────────────────────────────────────
 try:

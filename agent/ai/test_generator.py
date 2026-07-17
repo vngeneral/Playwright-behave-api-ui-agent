@@ -429,6 +429,12 @@ def _parse_args():
                    help="Output .feature file path")
     p.add_argument("--tags", nargs="*", default=["ai_generated", "smoke"],
                    help="Tags to apply to all generated scenarios")
+    p.add_argument("--testrail-section", type=int, default=None,
+                   help="After saving, create a TestRail case per scenario in this "
+                        "section and tag the file with the real @testrail_C<id> tags "
+                        "(requires TESTRAIL_URL/USER/API_KEY). Review the generated "
+                        "Gherkin first — prefer running agent.testrail.case_sync "
+                        "separately after review.")
     args = p.parse_args()
     if args.screenshot and not args.curl:
         p.error("--screenshot requires --curl")
@@ -450,6 +456,11 @@ if __name__ == "__main__":
         else:
             gherkin = gen.generate(url=args.url, tags=args.tags)
         gen.save(gherkin, args.feature)
+        if args.testrail_section is not None:
+            from agent.testrail.case_sync import sync_feature_file
+            report = sync_feature_file(args.feature, section_id=args.testrail_section)
+            if not report.ok:
+                raise SystemExit(1)
     except Exception as exc:
         log_failure(f"Test generation failed: {exc}")
         raise SystemExit(1) from exc

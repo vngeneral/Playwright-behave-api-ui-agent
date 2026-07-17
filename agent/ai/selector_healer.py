@@ -23,16 +23,15 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from behave.runner import Context
 from playwright.sync_api import Page
 
 from agent.ai.llm_client import LLMClient
-from helpers.constants.framework_constants import SCREENSHOTS_DIR, AI_ARTIFACTS_DIR
-from utils.logger import log_info_emoji, log_error, log_warning
-
+from helpers.constants.framework_constants import AI_ARTIFACTS_DIR, SCREENSHOTS_DIR
+from utils.logger import log_info_emoji, log_warning
 
 # ---------------------------------------------------------------------------
 # Persistence helpers
@@ -107,7 +106,7 @@ class AISelectorHealer:
         key = identifier or original_selector or "unknown"
 
         log_entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "bdd_step": getattr(context, "bdd_step", ""),
             "exception": exception,
             "original_selector": original_selector,
@@ -132,15 +131,6 @@ class AISelectorHealer:
 
         self._append_log(log_entry)
         return selector or ""
-
-    def stop_model(self):
-        """
-        Release AI resources.
-
-        For cloud providers this is a no-op.
-        Previously unloaded the Ollama GPU model; kept for API compatibility.
-        """
-        log_info_emoji("🧠", f"AI client ({self._client.provider_name}) released")
 
     # ------------------------------------------------------------------
     # Private helpers

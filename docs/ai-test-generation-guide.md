@@ -146,7 +146,9 @@ committing:
    feature file"). The generator applies whatever you passed via `--tags`,
    but check the LLM didn't drop or duplicate them.
 2. **Only add `@testrail_C<id>` after the case exists in TestRail.** Don't
-   invent case numbers.
+   invent case numbers — after reviewing the Gherkin, let the case-sync tool
+   create the cases and tag the file for you (see
+   [Linking generated scenarios to TestRail](#linking-generated-scenarios-to-testrail)).
 3. **Check step definitions exist.** If the LLM phrased a step that doesn't
    match anything in `e2e/steps/`, either edit the Gherkin to reuse an
    existing step or write the new step definition (thin — see CLAUDE.md →
@@ -159,6 +161,46 @@ committing:
    ```
 5. **Save it under `e2e/features/`.** Never the repo root — that's the
    legacy pre-restructure location and no longer exists.
+
+## Linking generated scenarios to TestRail
+
+Generated feature files start with no `@testrail_C<id>` tags — the cases don't
+exist in TestRail yet, and the `after_scenario` hook only queues results for
+tagged scenarios. `agent/testrail/case_sync.py` closes that loop: it creates
+one TestRail case per untagged scenario (title = scenario name, steps = the
+Gherkin body) and writes the real `@testrail_C<id>` tags back into the file.
+From then on, results flow through the normal pending-queue → `!testrail
+preview` → `!testrail push` review workflow.
+
+Like result pushing, case creation is **never automatic** — run it yourself,
+**after** you've reviewed and fixed the generated Gherkin (creating cases from
+unreviewed scenarios puts junk in TestRail):
+
+```bash
+# Preview what would be created — no TestRail calls, no file edits
+python -m agent.testrail.case_sync \
+  --feature e2e/features/ai_generated_vehicle_register.feature \
+  --section-id 42 --dry-run
+
+# Create the cases and tag the file
+python -m agent.testrail.case_sync \
+  --feature e2e/features/ai_generated_vehicle_register.feature \
+  --section-id 42
+```
+
+Requires `TESTRAIL_URL`, `TESTRAIL_USER`, `TESTRAIL_API_KEY`; the section can
+also come from `TESTRAIL_SECTION_ID` instead of `--section-id`. Already-tagged
+scenarios are skipped, so re-running the sync never creates duplicates — it's
+safe to run again after adding new scenarios to the file. The steps field
+adapts to the project's case template: plain-text `custom_steps` first, and if
+the template rejects it (a "Test Case (Steps)" project), the whole Gherkin
+body — including any Examples table — is stored as the first step of the case
+via `custom_steps_separated`. Only if both formats are rejected is the case
+created with its title alone.
+
+The generator CLI can chain the sync in one step via
+`--testrail-section 42` — only use that when you're re-generating a file you
+already know is good; otherwise review first, sync second.
 
 ## Programmatic use
 

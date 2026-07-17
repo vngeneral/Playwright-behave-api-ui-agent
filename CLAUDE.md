@@ -99,9 +99,10 @@ Current test counts: 47 (vehicle API) + 71 (TestRail) + others = ~150+ total, al
 │   │   ├── metrics.py         # MetricsCollector — JSON run summary in reports/metrics/
 │   │   └── alerts.py          # AlertManager
 │   └── testrail/
-│       ├── client.py          # TestRailClient (add_results_for_cases, get_run)
-│       ├── result_mapper.py   # Groovy→Python port: pass/fail logic, Behave→result
-│       └── pending_store.py   # Thread-safe JSON queue (reports/testrail/pending_results.json)
+│       ├── client.py          # TestRailClient (add_results_for_cases, add_case)
+│       ├── result_mapper.py   # Behave scenario → result (status + failure-cause comment)
+│       ├── pending_store.py   # Thread-safe JSON queue (reports/testrail/pending_results.json)
+│       └── case_sync.py       # Create TestRail cases for AI-generated scenarios, tag file
 │
 ├── e2e/                       # ← QA TEAM — feature files + step definitions only
 │   ├── features/
@@ -257,6 +258,21 @@ Pending results queue: `reports/testrail/pending_results.json`
 Required env vars (at push time only): `TESTRAIL_URL`, `TESTRAIL_USER`, `TESTRAIL_API_KEY`, `TESTRAIL_RUN_ID`
 
 Scenario tagging convention: `@testrail_C448337` → links to TestRail case C448337.
+
+For AI-generated feature files (which start untagged), create the cases and tag the
+file in one reviewed step — never invent case numbers by hand:
+
+```bash
+python -m agent.testrail.case_sync --feature e2e/features/<file>.feature --section-id N [--dry-run]
+```
+
+Case creation is manual-only (same philosophy as result pushing), idempotent
+(already-tagged scenarios are skipped), and needs `TESTRAIL_SECTION_ID` or
+`--section-id`. See docs/ai-test-generation-guide.md → "Linking generated
+scenarios to TestRail".
+
+Full API surface, failure-comment behaviour, and removed-API list:
+[docs/testrail-integration-guide.md](docs/testrail-integration-guide.md).
 
 ---
 

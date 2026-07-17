@@ -5,7 +5,7 @@ Minimal HTTP client for TestRail API v2.
 
 Only the endpoints actually used by the framework are implemented:
     POST /index.php?/api/v2/add_results_for_cases/{run_id}
-    GET  /index.php?/api/v2/get_run/{run_id}
+    POST /index.php?/api/v2/add_case/{section_id}
 
 Authentication:
     Basic auth — user:api_key, where the API key is a TestRail API token
@@ -41,10 +41,11 @@ from utils.logger import log_info_emoji, log_warning
 # Environment variable names — never hardcode values
 # ---------------------------------------------------------------------------
 
-_ENV_URL     = "TESTRAIL_URL"
-_ENV_USER    = "TESTRAIL_USER"
-_ENV_API_KEY = "TESTRAIL_API_KEY"
-_ENV_RUN_ID  = "TESTRAIL_RUN_ID"
+_ENV_URL        = "TESTRAIL_URL"
+_ENV_USER       = "TESTRAIL_USER"
+_ENV_API_KEY    = "TESTRAIL_API_KEY"
+_ENV_RUN_ID     = "TESTRAIL_RUN_ID"
+_ENV_SECTION_ID = "TESTRAIL_SECTION_ID"
 
 _API_PATH = "index.php?/api/v2"
 
@@ -71,7 +72,7 @@ class TestRailClient:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_env(cls) -> "TestRailClient":
+    def from_env(cls) -> TestRailClient:
         """
         Construct a client from environment variables.
 
@@ -92,14 +93,12 @@ class TestRailClient:
     @staticmethod
     def default_run_id() -> int | None:
         """Return the TESTRAIL_RUN_ID env var as int, or None if not set."""
-        raw = os.getenv(_ENV_RUN_ID)
-        if raw is None:
-            return None
-        try:
-            return int(raw)
-        except ValueError:
-            log_warning(f"TESTRAIL_RUN_ID={raw!r} is not a valid integer — ignored")
-            return None
+        return _int_env(_ENV_RUN_ID)
+
+    @staticmethod
+    def default_section_id() -> int | None:
+        """Return the TESTRAIL_SECTION_ID env var as int, or None if not set."""
+        return _int_env(_ENV_SECTION_ID)
 
     # ------------------------------------------------------------------
     # API methods
@@ -136,31 +135,70 @@ class TestRailClient:
         response = self._session.post(url, auth=self._auth, json=payload, timeout=30)
         return self._handle_response(response, f"add_results_for_cases run={run_id}")
 
-    def get_run(self, run_id: int) -> dict[str, Any]:
+    def add_case(
+        self,
+        section_id: int,
+        title: str,
+        custom_steps: str | None = None,
+    ) -> dict[str, Any]:
         """
-        GET /index.php?/api/v2/get_run/{run_id}
+        POST /index.php?/api/v2/add_case/{section_id}
 
-        Fetch metadata for a test run (name, project, status).
+        Create a new test case in a TestRail section. Used by case_sync.py to
+        register AI-generated scenarios so they get real @testrail_C<id> tags.
+
+        Which steps field a case accepts depends on the project's template, so
+        payload variants are tried in order — HTTP 400 (TestRail's response to
+        a field the template doesn't define) advances to the next variant, any
+        other error raises immediately:
+
+            1. ``custom_steps``            — "Test Case (Text)" template
+            2. ``custom_steps_separated``  — "Test Case (Steps)" template; the
+               whole Gherkin body becomes the content of the case's first step
+            3. title only                  — last resort so the case is still
+               created and the scenario still gets its @testrail_C<id> tag
 
         Args:
-            run_id:  TestRail test run ID.
+            section_id:    TestRail section ID to create the case under.
+            title:         Case title (the scenario name).
+            custom_steps:  Optional plain-text steps (the Gherkin body).
 
         Returns:
-            Parsed JSON response dict.
+            Parsed JSON response dict — includes the new case's "id".
 
         Raises:
-            TestRailAPIError on non-2xx response.
+            TestRailAPIError on non-2xx response (after all fallbacks).
         """
-        url = f"{self._base_url}/{_API_PATH}/get_run/{run_id}"
-        log_info_emoji("🔍", f"TestRail → GET get_run run={run_id}")
-        response = self._session.get(url, auth=self._auth, timeout=30)
-        return self._handle_response(response, f"get_run run={run_id}")
+        url = f"{self._base_url}/{_API_PATH}/add_case/{section_id}"
+
+        payloads: list[dict[str, Any]] = [{"title": title}]
+        if custom_steps:
+            payloads = [
+                {"title": title, "custom_steps": custom_steps},
+                {"title": title, "custom_steps_separated": [{"content": custom_steps}]},
+                {"title": title},
+            ]
+
+        log_info_emoji("📝", f"TestRail → POST add_case section={section_id} title={title!r}")
+
+        for i, payload in enumerate(payloads):
+            response = self._session.post(url, auth=self._auth, json=payload, timeout=30)
+            if response.status_code == 400 and i < len(payloads) - 1:
+                rejected = "custom_steps" if "custom_steps" in payload else "custom_steps_separated"
+                retry_with = (
+                    "custom_steps_separated" if "custom_steps" in payload else "title only"
+                )
+                log_warning(
+                    f"TestRail rejected {rejected} (template mismatch?) — retrying with {retry_with}"
+                )
+                continue
+            return self._handle_response(response, f"add_case section={section_id}")
 
     def close(self) -> None:
         """Release the underlying HTTP session."""
         self._session.close()
 
-    def __enter__(self) -> "TestRailClient":
+    def __enter__(self) -> TestRailClient:
         return self
 
     def __exit__(self, *_) -> None:
@@ -186,6 +224,23 @@ class TestRailClient:
                 context=context,
                 body=body,
             )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _int_env(name: str) -> int | None:
+    """Return an env var as int, or None if unset / not a valid integer."""
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        log_warning(f"{name}={raw!r} is not a valid integer — ignored")
+        return None
 
 
 # ---------------------------------------------------------------------------
