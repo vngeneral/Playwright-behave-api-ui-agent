@@ -8,7 +8,59 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from agent.ai.test_generator import AITestGenerator, parse_curl
+from agent.ai.test_generator import AITestGenerator, parse_curl, normalize_curl_command, _read_input_file
+
+
+class TestNormalizeCurlCommand(unittest.TestCase):
+    """normalize_curl_command must collapse multi-line pasted cURL into one line."""
+
+    def test_single_line_is_unchanged_in_content(self):
+        raw = 'curl -X POST https://api.example.com/vehicles -d \'{"vin":"X"}\''
+        self.assertEqual(normalize_curl_command(raw), raw)
+
+    def test_joins_backslash_newline_continuations(self):
+        raw = (
+            'curl -X POST https://api.example.com/register \\\n'
+            '  -H "Content-Type: application/json" \\\n'
+            '  -H "x-api-key: secret123" \\\n'
+            '  -d \'{"vin":"ABC123"}\'\n'
+        )
+        normalized = normalize_curl_command(raw)
+        self.assertNotIn("\\", normalized)
+        self.assertNotIn("\n", normalized)
+        parsed = parse_curl(normalized)
+        self.assertEqual(parsed["method"], "POST")
+        self.assertEqual(parsed["url"], "https://api.example.com/register")
+        self.assertEqual(parsed["body"], '{"vin":"ABC123"}')
+
+    def test_parse_curl_handles_multiline_input_directly(self):
+        raw = (
+            'curl -X POST https://api.example.com/register \\\n'
+            '  -H "x-api-key: secret123" \\\n'
+            '  -d \'{"vin":"ABC123"}\''
+        )
+        parsed = parse_curl(raw)
+        self.assertEqual(parsed["url"], "https://api.example.com/register")
+        self.assertEqual(parsed["headers"]["x-api-key"], "<redacted>")
+
+
+class TestReadInputFile(unittest.TestCase):
+    """_read_input_file backs the CLI's --url/--curl/--text file arguments."""
+
+    def _make_file(self, content: str) -> str:
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
+        tmp.write(content)
+        tmp.close()
+        self.addCleanup(lambda: Path(tmp.name).unlink(missing_ok=True))
+        return tmp.name
+
+    def test_reads_and_strips_trailing_newline(self):
+        path = self._make_file("https://api.example.com/vehicles\n")
+        self.assertEqual(_read_input_file(path), "https://api.example.com/vehicles")
+
+    def test_raises_when_file_missing(self):
+        with self.assertRaises(FileNotFoundError):
+            _read_input_file("/does/not/exist.txt")
 
 
 class TestParseCurlMethod(unittest.TestCase):
@@ -144,8 +196,8 @@ class TestGenerateFromCurl(unittest.TestCase):
         self.assertIn("@regression", prompt)
 
 
-class TestGenerateFromCurlAndScreenshot(unittest.TestCase):
-    """generate_from_curl_and_screenshot must attach the image and never leak secrets."""
+class TestGenerateFromScreenshot(unittest.TestCase):
+    """generate_from_screenshot must attach the image and require the file to exist."""
 
     def _make_generator(self, response_text="Feature: Stub\n\nScenario: x"):
         with patch("agent.ai.test_generator.LLMClient") as mock_llm_client:
@@ -166,51 +218,27 @@ class TestGenerateFromCurlAndScreenshot(unittest.TestCase):
     def test_raises_when_screenshot_missing(self):
         gen, _ = self._make_generator()
         with self.assertRaises(FileNotFoundError):
-            gen.generate_from_curl_and_screenshot(
-                'curl https://api.example.com/vehicles',
-                screenshot_path="/does/not/exist.png",
-            )
+            gen.generate_from_screenshot("/does/not/exist.png")
 
     def test_passes_screenshot_path_as_image(self):
         gen, mock_client = self._make_generator()
         screenshot = self._make_screenshot()
-        gen.generate_from_curl_and_screenshot(
-            'curl -X POST https://api.example.com/register -d \'{"vin":"ABC123"}\'',
-            screenshot_path=screenshot,
-        )
+        gen.generate_from_screenshot(screenshot)
         images = mock_client.generate.call_args.kwargs["images"]
         self.assertEqual(images, [screenshot])
-
-    def test_prompt_contains_redacted_placeholder_not_real_secret(self):
-        gen, mock_client = self._make_generator()
-        screenshot = self._make_screenshot()
-        gen.generate_from_curl_and_screenshot(
-            'curl -X POST https://api.example.com/register '
-            '-H "x-api-key: real-secret-value" -d \'{"vin":"ABC123"}\'',
-            screenshot_path=screenshot,
-        )
-        prompt = mock_client.generate.call_args.kwargs["prompt"]
-        self.assertIn("<redacted>", prompt)
-        self.assertNotIn("real-secret-value", prompt)
 
     def test_adds_feature_line_if_missing(self):
         gen, _ = self._make_generator(response_text="Scenario: no feature line here")
         screenshot = self._make_screenshot()
-        gherkin = gen.generate_from_curl_and_screenshot(
-            'curl https://api.example.com/vehicles', screenshot_path=screenshot
-        )
+        gherkin = gen.generate_from_screenshot(screenshot)
         self.assertTrue(gherkin.startswith("Feature:"))
 
     def test_applies_tags_to_prompt(self):
         gen, mock_client = self._make_generator()
         screenshot = self._make_screenshot()
-        gen.generate_from_curl_and_screenshot(
-            'curl https://api.example.com/vehicles',
-            screenshot_path=screenshot,
-            tags=["api", "regression"],
-        )
+        gen.generate_from_screenshot(screenshot, tags=["smoke", "regression"])
         prompt = mock_client.generate.call_args.kwargs["prompt"]
-        self.assertIn("@api", prompt)
+        self.assertIn("@smoke", prompt)
         self.assertIn("@regression", prompt)
 
 
