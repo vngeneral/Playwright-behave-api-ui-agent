@@ -19,7 +19,7 @@ Provider configuration (env vars):
     AI_MODEL      — model override (use a vision-capable model for --screenshot,
                     e.g. claude-3-5-sonnet-20241022 or gpt-4o)
 
-Usage (standalone CLI):
+Usage (standalone CLI, single file):
     Each source argument below is a path to a plain .txt file holding the
     actual value — a URL, a raw cURL command (single- or multi-line, exactly
     as pasted from a browser's "Copy as cURL"), or a plaintext requirement —
@@ -45,6 +45,19 @@ Usage (standalone CLI):
         --text requirement.txt \\
         --feature e2e/features/ai_generated_register.feature
 
+Usage (standalone CLI, batch folder):
+    Pass a folder instead of a file to any of --url/--curl/--screenshot/--text
+    and every matching file inside it (.txt for url/curl/text, an image
+    extension for screenshot) is processed one by one — one input file
+    produces one .feature file, named after the input file's stem, written
+    into --output-dir. A failure on one file is logged and skipped; it never
+    aborts the rest of the batch.
+
+    python -m agent.ai.test_generator \\
+        --curl curls/ \\
+        --output-dir e2e/features/ai_generated \\
+        --tags api regression
+
 Usage (programmatic):
     from agent.ai.test_generator import AITestGenerator
     gen = AITestGenerator()
@@ -55,6 +68,10 @@ Usage (programmatic):
         screenshot_path="reports/screenshots/register-form.png",
         tags=["smoke"],
     )
+
+    # Batch: one .feature per file in curls/
+    results = gen.generate_batch(mode="curl", input_dir="curls", output_dir="e2e/features/ai_generated")
+    failed = [r for r in results if not r.ok]
 """
 from __future__ import annotations
 
@@ -62,12 +79,13 @@ import argparse
 import re
 import shlex
 import textwrap
+from dataclasses import dataclass
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
 from agent.ai.llm_client import LLMClient
-from utils.logger import log_info_emoji, log_failure, log_success
+from utils.logger import log_failure, log_info_emoji, log_success, log_warning
 
 _SYSTEM_PROMPT_URL = textwrap.dedent("""
     You are a senior QA automation engineer who writes Gherkin BDD feature files.
@@ -129,6 +147,28 @@ _SECRET_HEADER_NAMES = {
     "authorization", "x-api-key", "api-key", "x-auth-token", "cookie",
 }
 _REDACTED = "<redacted>"
+
+# Batch mode name -> (AITestGenerator method name, allowed file extensions).
+# Shared by generate_batch() and the CLI so both dispatch identically.
+_BATCH_MODES: dict[str, tuple[str, frozenset[str]]] = {
+    "url": ("generate", frozenset({".txt"})),
+    "curl": ("generate_from_curl", frozenset({".txt"})),
+    "text": ("generate_from_text", frozenset({".txt"})),
+    "screenshot": ("generate_from_screenshot", frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})),
+}
+
+
+@dataclass
+class BatchItemResult:
+    """Outcome of generating one .feature file from one input file in a batch run."""
+    input_path: Path
+    output_path: Path | None
+    scenario_count: int
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
 
 
 class AITestGenerator:
@@ -255,6 +295,65 @@ class AITestGenerator:
         p.write_text(gherkin, encoding="utf-8")
         log_success(f"Feature file written: {p}")
         return p
+
+    def generate_batch(
+        self,
+        mode: str,
+        input_dir: str,
+        output_dir: str,
+        tags: list[str] | None = None,
+    ) -> list[BatchItemResult]:
+        """
+        Generate one .feature file per input file found directly inside
+        *input_dir* (one file = one URL / cURL command / requirement / screenshot),
+        writing each into *output_dir* named after the input file's stem.
+
+        *mode* selects which single-item method drives generation: "url",
+        "curl", "text", or "screenshot" (see _BATCH_MODES). Files are processed
+        in filename order for a deterministic, re-runnable batch. A failure on
+        one file — an unparsable cURL command, an empty file, an LLM error —
+        is recorded on that file's BatchItemResult and does NOT abort the rest
+        of the batch; check `result.ok` / `result.error` on each item.
+        """
+        if mode not in _BATCH_MODES:
+            raise ValueError(f"Unknown batch mode {mode!r}; expected one of {sorted(_BATCH_MODES)}")
+
+        in_dir = Path(input_dir)
+        if not in_dir.is_dir():
+            raise NotADirectoryError(f"Batch input directory not found: {input_dir}")
+
+        method_name, suffixes = _BATCH_MODES[mode]
+        method = getattr(self, method_name)
+
+        files = sorted(
+            (p for p in in_dir.iterdir() if p.is_file() and p.suffix.lower() in suffixes),
+            key=lambda p: p.name,
+        )
+        if not files:
+            log_warning(f"No {'/'.join(sorted(suffixes))} files found in {input_dir}")
+            return []
+
+        log_info_emoji("📂", f"Batch generating ({mode}): {len(files)} file(s) from {input_dir}")
+        results: list[BatchItemResult] = []
+        for f in files:
+            try:
+                if mode == "screenshot":
+                    gherkin = method(str(f), tags=tags)
+                else:
+                    content = _read_input_file(str(f))
+                    if not content:
+                        raise ValueError("input file is empty")
+                    gherkin = method(content, tags=tags)
+                out_path = Path(output_dir) / f"{f.stem}.feature"
+                self.save(gherkin, str(out_path))
+                results.append(BatchItemResult(f, out_path, self._count_scenarios(gherkin)))
+            except Exception as exc:
+                log_failure(f"[{f.name}] generation failed: {exc}")
+                results.append(BatchItemResult(f, None, 0, str(exc)))
+
+        succeeded = sum(r.ok for r in results)
+        log_success(f"Batch complete: {succeeded}/{len(results)} succeeded → {output_dir}")
+        return results
 
     # ------------------------------------------------------------------
     # Private helpers — URL mode
@@ -428,54 +527,76 @@ def _read_input_file(path: str) -> str:
     return p.read_text(encoding="utf-8").strip()
 
 
+_FEATURE_DEFAULT = "e2e/features/ai_generated.feature"
+_OUTPUT_DIR_DEFAULT = "e2e/features/ai_generated"
+
+
 def _parse_args():
     p = argparse.ArgumentParser(
         description="Generate Gherkin from a live page, a cURL command, "
                      "a UI screenshot, or a plaintext requirement — each "
-                     "read from a .txt file (--screenshot excepted, an image path)"
+                     "read from a .txt file (--screenshot excepted, an image path). "
+                     "Pass a folder instead of a file to batch-process every matching "
+                     "file inside it, one .feature file per input file."
     )
     source = p.add_mutually_exclusive_group(required=True)
-    source.add_argument("--url", metavar="FILE", help="Path to a .txt file containing the page URL to analyse")
-    source.add_argument("--curl", metavar="FILE",
+    source.add_argument("--url", metavar="FILE_OR_DIR",
+                         help="Path to a .txt file containing the page URL to analyse, "
+                              "or a folder of such .txt files for batch mode")
+    source.add_argument("--curl", metavar="FILE_OR_DIR",
                          help="Path to a .txt file containing a cURL command describing an "
-                              "API request (single- or multi-line)")
-    source.add_argument("--screenshot", metavar="FILE", help="Path to a UI screenshot image to analyse")
-    source.add_argument("--text", metavar="FILE",
-                         help="Path to a .txt file containing a plaintext requirement description")
-    p.add_argument("--feature", default="e2e/features/ai_generated.feature",
-                   help="Output .feature file path")
+                              "API request (single- or multi-line), or a folder of such "
+                              ".txt files for batch mode — one file per cURL command")
+    source.add_argument("--screenshot", metavar="FILE_OR_DIR",
+                         help="Path to a UI screenshot image to analyse, or a folder of "
+                              "screenshot images for batch mode")
+    source.add_argument("--text", metavar="FILE_OR_DIR",
+                         help="Path to a .txt file containing a plaintext requirement "
+                              "description, or a folder of such .txt files for batch mode")
+    p.add_argument("--feature", default=_FEATURE_DEFAULT,
+                   help="Output .feature file path (single-file mode only)")
+    p.add_argument("--output-dir", default=_OUTPUT_DIR_DEFAULT,
+                   help="Output directory for batch mode — used when the --url/--curl/"
+                        "--screenshot/--text argument is a folder. One .feature file is "
+                        "written per input file, named after that file's stem")
     p.add_argument("--tags", nargs="*", default=["ai_generated", "smoke"],
                    help="Tags to apply to all generated scenarios")
-    p.add_argument("--testrail-section", type=int, default=None,
-                   help="After saving, create a TestRail case per scenario in this "
-                        "section and tag the file with the real @testrail_C<id> tags "
-                        "(requires TESTRAIL_URL/USER/API_KEY). Review the generated "
-                        "Gherkin first — prefer running agent.testrail.case_sync "
-                        "separately after review.")
     return p.parse_args()
+
+
+def _resolve_source(args) -> tuple[str, str]:
+    """Return (path, mode) for whichever mutually-exclusive source arg was passed."""
+    for mode in ("curl", "screenshot", "text", "url"):
+        value = getattr(args, mode)
+        if value:
+            return value, mode
+    raise AssertionError("argparse mutually-exclusive group should guarantee one source")  # pragma: no cover
 
 
 if __name__ == "__main__":
     args = _parse_args()
     try:
         gen = AITestGenerator()
-        if args.curl:
-            curl_command = _read_input_file(args.curl)
-            gherkin = gen.generate_from_curl(curl_command, tags=args.tags)
-        elif args.screenshot:
-            gherkin = gen.generate_from_screenshot(args.screenshot, tags=args.tags)
-        elif args.text:
-            description = _read_input_file(args.text)
-            gherkin = gen.generate_from_text(description, tags=args.tags)
-        else:
-            url = _read_input_file(args.url)
-            gherkin = gen.generate(url=url, tags=args.tags)
-        gen.save(gherkin, args.feature)
-        if args.testrail_section is not None:
-            from agent.testrail.case_sync import sync_feature_file
-            report = sync_feature_file(args.feature, section_id=args.testrail_section)
-            if not report.ok:
+        source, mode = _resolve_source(args)
+
+        if Path(source).is_dir():
+            if args.feature != _FEATURE_DEFAULT:
+                log_warning(f"--feature is ignored in batch mode; writing into --output-dir={args.output_dir}")
+
+            results = gen.generate_batch(mode=mode, input_dir=source, output_dir=args.output_dir, tags=args.tags)
+            failed = [r for r in results if not r.ok]
+            if failed:
+                for r in failed:
+                    log_failure(f"  {r.input_path.name}: {r.error}")
                 raise SystemExit(1)
+        else:
+            method_name, _ = _BATCH_MODES[mode]
+            method = getattr(gen, method_name)
+            if mode == "screenshot":
+                gherkin = method(source, tags=args.tags)
+            else:
+                gherkin = method(_read_input_file(source), tags=args.tags)
+            gen.save(gherkin, args.feature)
     except Exception as exc:
         log_failure(f"Test generation failed: {exc}")
         raise SystemExit(1) from exc

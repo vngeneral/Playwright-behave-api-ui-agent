@@ -495,6 +495,72 @@ class TestTestRailClientHTTP(unittest.TestCase):
             os.environ.pop("TESTRAIL_SECTION_ID", None)
             self.assertIsNone(TestRailClient.default_section_id())
 
+    def test_default_project_id_from_env(self):
+        with patch.dict(os.environ, {"TESTRAIL_PROJECT_ID": "7"}):
+            self.assertEqual(TestRailClient.default_project_id(), 7)
+
+    def test_default_project_id_none_when_unset(self):
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop("TESTRAIL_PROJECT_ID", None)
+            self.assertIsNone(TestRailClient.default_project_id())
+
+    def test_default_suite_id_from_env(self):
+        with patch.dict(os.environ, {"TESTRAIL_SUITE_ID": "3"}):
+            self.assertEqual(TestRailClient.default_suite_id(), 3)
+
+    def test_get_cases_calls_correct_url_with_filters(self):
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"cases": [{"id": 1, "title": "T"}]}
+
+        with patch.object(self.client._session, "get", return_value=mock_resp) as mock_get:
+            cases = self.client.get_cases(project_id=7, section_id=42, suite_id=3)
+            url = mock_get.call_args[0][0]
+            params = mock_get.call_args[1]["params"]
+            self.assertIn("/api/v2/get_cases/7", url)
+            self.assertEqual(params, {"section_id": 42, "suite_id": 3})
+            self.assertEqual(cases, [{"id": 1, "title": "T"}])
+
+    def test_get_cases_accepts_bare_list_response(self):
+        """Some TestRail versions return a raw array instead of {"cases": [...]}."""
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [{"id": 1, "title": "T"}]
+
+        with patch.object(self.client._session, "get", return_value=mock_resp):
+            cases = self.client.get_cases(project_id=7)
+            self.assertEqual(cases, [{"id": 1, "title": "T"}])
+
+    def test_get_cases_follows_pagination(self):
+        page1 = MagicMock()
+        page1.ok = True
+        page1.status_code = 200
+        page1.json.return_value = {
+            "cases": [{"id": 1, "title": "A"}],
+            "_links": {"next": "/api/v2/get_cases/7&offset=1", "prev": None},
+        }
+        page2 = MagicMock()
+        page2.ok = True
+        page2.status_code = 200
+        page2.json.return_value = {"cases": [{"id": 2, "title": "B"}], "_links": {"next": None}}
+
+        with patch.object(self.client._session, "get", side_effect=[page1, page2]) as mock_get:
+            cases = self.client.get_cases(project_id=7)
+            self.assertEqual(mock_get.call_count, 2)
+            self.assertEqual([c["id"] for c in cases], [1, 2])
+
+    def test_get_cases_non_200_raises(self):
+        mock_resp = MagicMock()
+        mock_resp.ok = False
+        mock_resp.status_code = 403
+        mock_resp.text = "Forbidden"
+
+        with patch.object(self.client._session, "get", return_value=mock_resp):
+            with self.assertRaises(TestRailAPIError):
+                self.client.get_cases(project_id=7)
+
 
 # ===========================================================================
 # 4 — Command parser: !testrail recognised

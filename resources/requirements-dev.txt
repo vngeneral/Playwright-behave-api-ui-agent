@@ -1,6 +1,12 @@
-# Dev/test-only dependencies for running the agent/ unit test suite.
+# Dev/test-only dependencies for running the agent/ unit test suite and for
+# linting/type-checking (see CLAUDE.md -> "Linting / type checking").
 # Install alongside requirements.txt:
 #   pip install -r resources/requirements.txt -r resources/requirements-dev.txt
 #   python -m pytest tests/ -v
+#   ruff check . / ruff format . / mypy .
 -r requirements.txt
 pytest~=8.3
+ruff
+mypy
+types-requests
+types-PyYAML

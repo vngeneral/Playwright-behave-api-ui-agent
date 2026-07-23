@@ -3,12 +3,19 @@ Unit tests for agent/ai/test_generator.py
 No network calls, no LLM calls — parse_curl is pure, and generate_from_*
 methods are tested with a mocked LLM client.
 """
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from agent.ai.test_generator import AITestGenerator, parse_curl, normalize_curl_command, _read_input_file
+from agent.ai.test_generator import (
+    AITestGenerator,
+    BatchItemResult,
+    _read_input_file,
+    normalize_curl_command,
+    parse_curl,
+)
 
 
 class TestNormalizeCurlCommand(unittest.TestCase):
@@ -268,6 +275,150 @@ class TestGenerateFromText(unittest.TestCase):
         gen.generate_from_text("Some requirement")
         prompt = mock_client.generate.call_args.kwargs["prompt"]
         self.assertIn("@ai_generated", prompt)
+
+
+class TestGenerateBatch(unittest.TestCase):
+    """generate_batch must read a folder of inputs and emit one .feature per file,
+    without letting one bad file abort the rest of the batch."""
+
+    def _make_generator(self, response_text="Feature: Stub\n\nScenario: x", side_effect=None):
+        with patch("agent.ai.test_generator.LLMClient") as mock_llm_client:
+            mock_client = MagicMock()
+            mock_client.provider_name = "stub"
+            if side_effect is not None:
+                mock_client.generate.side_effect = side_effect
+            else:
+                mock_client.generate.return_value = response_text
+            mock_llm_client.from_config.return_value = mock_client
+            gen = AITestGenerator()
+        return gen, mock_client
+
+    def _tmp_dir(self) -> Path:
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(tmp, ignore_errors=True))
+        return Path(tmp)
+
+    def _write(self, directory: Path, name: str, content: str) -> Path:
+        p = directory / name
+        p.write_text(content, encoding="utf-8")
+        return p
+
+    def test_creates_one_feature_file_per_input(self):
+        gen, _ = self._make_generator()
+        in_dir, out_dir = self._tmp_dir(), self._tmp_dir()
+        self._write(in_dir, "register.txt", "curl https://api.example.com/register")
+        self._write(in_dir, "deregister.txt", "curl https://api.example.com/deregister")
+
+        results = gen.generate_batch(mode="curl", input_dir=str(in_dir), output_dir=str(out_dir))
+
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(r.ok for r in results))
+        self.assertTrue((out_dir / "register.feature").is_file())
+        self.assertTrue((out_dir / "deregister.feature").is_file())
+        self.assertEqual((out_dir / "register.feature").read_text(), "Feature: Stub\n\nScenario: x")
+
+    def test_empty_directory_returns_empty_list_without_raising(self):
+        gen, _ = self._make_generator()
+        in_dir, out_dir = self._tmp_dir(), self._tmp_dir()
+        results = gen.generate_batch(mode="curl", input_dir=str(in_dir), output_dir=str(out_dir))
+        self.assertEqual(results, [])
+
+    def test_non_matching_extensions_are_ignored(self):
+        gen, mock_client = self._make_generator()
+        in_dir, out_dir = self._tmp_dir(), self._tmp_dir()
+        self._write(in_dir, "register.txt", "curl https://api.example.com/register")
+        self._write(in_dir, "notes.md", "not a curl file")
+        self._write(in_dir, ".DS_Store", "junk")
+
+        results = gen.generate_batch(mode="curl", input_dir=str(in_dir), output_dir=str(out_dir))
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].input_path.name, "register.txt")
+        self.assertEqual(mock_client.generate.call_count, 1)
+
+    def test_one_failure_does_not_abort_the_rest_of_the_batch(self):
+        gen, _ = self._make_generator()
+        in_dir, out_dir = self._tmp_dir(), self._tmp_dir()
+        self._write(in_dir, "a_bad.txt", "curl -X GET -H \"Accept: application/json\"")  # no URL -> ValueError
+        self._write(in_dir, "b_good.txt", "curl https://api.example.com/good")
+
+        results = gen.generate_batch(mode="curl", input_dir=str(in_dir), output_dir=str(out_dir))
+        by_name = {r.input_path.name: r for r in results}
+
+        self.assertEqual(len(results), 2)
+        self.assertFalse(by_name["a_bad.txt"].ok)
+        self.assertIn("URL", by_name["a_bad.txt"].error)
+        self.assertIsNone(by_name["a_bad.txt"].output_path)
+        self.assertTrue(by_name["b_good.txt"].ok)
+        self.assertTrue((out_dir / "b_good.feature").is_file())
+        self.assertFalse((out_dir / "a_bad.feature").is_file())
+
+    def test_empty_input_file_is_recorded_as_failure(self):
+        gen, _ = self._make_generator()
+        in_dir, out_dir = self._tmp_dir(), self._tmp_dir()
+        self._write(in_dir, "blank.txt", "   \n  ")
+
+        results = gen.generate_batch(mode="curl", input_dir=str(in_dir), output_dir=str(out_dir))
+
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].ok)
+        self.assertIn("empty", results[0].error)
+
+    def test_screenshot_mode_filters_by_image_extension(self):
+        gen, mock_client = self._make_generator()
+        in_dir, out_dir = self._tmp_dir(), self._tmp_dir()
+        (in_dir / "login.png").write_bytes(b"fake-png-bytes")
+        (in_dir / "readme.txt").write_text("should be ignored in screenshot mode")
+
+        results = gen.generate_batch(mode="screenshot", input_dir=str(in_dir), output_dir=str(out_dir))
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].input_path.name, "login.png")
+        images = mock_client.generate.call_args.kwargs["images"]
+        self.assertEqual(images, [str(in_dir / "login.png")])
+        self.assertTrue((out_dir / "login.feature").is_file())
+
+    def test_files_processed_in_sorted_filename_order(self):
+        gen, mock_client = self._make_generator()
+        in_dir, out_dir = self._tmp_dir(), self._tmp_dir()
+        self._write(in_dir, "c.txt", "curl https://ccc.example.com/endpoint")
+        self._write(in_dir, "a.txt", "curl https://aaa.example.com/endpoint")
+        self._write(in_dir, "b.txt", "curl https://bbb.example.com/endpoint")
+
+        gen.generate_batch(mode="curl", input_dir=str(in_dir), output_dir=str(out_dir))
+
+        prompts = [call.kwargs["prompt"] for call in mock_client.generate.call_args_list]
+        order = [next(h for h in ("aaa.", "bbb.", "ccc.") if h in p) for p in prompts]
+        self.assertEqual(order, ["aaa.", "bbb.", "ccc."])
+
+    def test_raises_for_missing_input_directory(self):
+        gen, _ = self._make_generator()
+        with self.assertRaises(NotADirectoryError):
+            gen.generate_batch(mode="curl", input_dir="/does/not/exist", output_dir=str(self._tmp_dir()))
+
+    def test_raises_for_unknown_mode(self):
+        gen, _ = self._make_generator()
+        in_dir = self._tmp_dir()
+        with self.assertRaises(ValueError):
+            gen.generate_batch(mode="bogus", input_dir=str(in_dir), output_dir=str(self._tmp_dir()))
+
+    def test_applies_tags_to_every_file_in_batch(self):
+        gen, mock_client = self._make_generator()
+        in_dir, out_dir = self._tmp_dir(), self._tmp_dir()
+        self._write(in_dir, "a.txt", "curl https://api.example.com/a")
+        self._write(in_dir, "b.txt", "curl https://api.example.com/b")
+
+        gen.generate_batch(mode="curl", input_dir=str(in_dir), output_dir=str(out_dir), tags=["api", "regression"])
+
+        for call in mock_client.generate.call_args_list:
+            self.assertIn("@api", call.kwargs["prompt"])
+            self.assertIn("@regression", call.kwargs["prompt"])
+
+    def test_batch_item_result_ok_reflects_error_field(self):
+        ok_result = BatchItemResult(Path("x.txt"), Path("x.feature"), 3, None)
+        failed_result = BatchItemResult(Path("y.txt"), None, 0, "boom")
+        self.assertTrue(ok_result.ok)
+        self.assertFalse(failed_result.ok)
 
 
 if __name__ == "__main__":

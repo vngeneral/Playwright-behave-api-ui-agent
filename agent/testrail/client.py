@@ -6,6 +6,7 @@ Minimal HTTP client for TestRail API v2.
 Only the endpoints actually used by the framework are implemented:
     POST /index.php?/api/v2/add_results_for_cases/{run_id}
     POST /index.php?/api/v2/add_case/{section_id}
+    GET  /index.php?/api/v2/get_cases/{project_id}&section_id=...&suite_id=...
 
 Authentication:
     Basic auth — user:api_key, where the API key is a TestRail API token
@@ -16,6 +17,8 @@ Environment variables (all required at push time):
     TESTRAIL_USER     — email address used to log in to TestRail
     TESTRAIL_API_KEY  — TestRail API key (generated under My Settings → API Keys)
     TESTRAIL_RUN_ID   — default run ID; can be overridden per push call
+    TESTRAIL_PROJECT_ID — required by case_sync's duplicate-case check (get_cases)
+    TESTRAIL_SUITE_ID   — only needed for multi-suite TestRail projects
 
 Usage::
 
@@ -46,6 +49,8 @@ _ENV_USER       = "TESTRAIL_USER"
 _ENV_API_KEY    = "TESTRAIL_API_KEY"
 _ENV_RUN_ID     = "TESTRAIL_RUN_ID"
 _ENV_SECTION_ID = "TESTRAIL_SECTION_ID"
+_ENV_PROJECT_ID = "TESTRAIL_PROJECT_ID"
+_ENV_SUITE_ID   = "TESTRAIL_SUITE_ID"
 
 _API_PATH = "index.php?/api/v2"
 
@@ -99,6 +104,16 @@ class TestRailClient:
     def default_section_id() -> int | None:
         """Return the TESTRAIL_SECTION_ID env var as int, or None if not set."""
         return _int_env(_ENV_SECTION_ID)
+
+    @staticmethod
+    def default_project_id() -> int | None:
+        """Return the TESTRAIL_PROJECT_ID env var as int, or None if not set."""
+        return _int_env(_ENV_PROJECT_ID)
+
+    @staticmethod
+    def default_suite_id() -> int | None:
+        """Return the TESTRAIL_SUITE_ID env var as int, or None if not set."""
+        return _int_env(_ENV_SUITE_ID)
 
     # ------------------------------------------------------------------
     # API methods
@@ -193,6 +208,64 @@ class TestRailClient:
                 )
                 continue
             return self._handle_response(response, f"add_case section={section_id}")
+
+    def get_cases(
+        self,
+        project_id: int,
+        section_id: int | None = None,
+        suite_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        GET /index.php?/api/v2/get_cases/{project_id}
+
+        List existing cases, optionally narrowed to one section (and suite,
+        for multi-suite projects). Used by case_sync to check whether a case
+        with a scenario's title already exists before creating a new one —
+        TestRail's add_case has no title-uniqueness check of its own, so
+        skipping this lookup means re-syncing a renamed/regenerated feature
+        file creates duplicate cases instead of reusing the existing one.
+
+        Transparently follows pagination (TestRail caps each page at 250
+        results) until every matching case has been collected.
+
+        Args:
+            project_id:  TestRail project ID (TESTRAIL_PROJECT_ID).
+            section_id:  Optional section filter.
+            suite_id:    Optional suite filter — only needed for multi-suite
+                         projects; single-suite projects resolve it implicitly.
+
+        Returns:
+            List of case dicts (each has at least "id" and "title").
+
+        Raises:
+            TestRailAPIError on non-2xx response.
+        """
+        url = f"{self._base_url}/{_API_PATH}/get_cases/{project_id}"
+        params: dict[str, int] = {}
+        if section_id is not None:
+            params["section_id"] = section_id
+        if suite_id is not None:
+            params["suite_id"] = suite_id
+
+        log_info_emoji("📥", f"TestRail → GET get_cases project={project_id} section={section_id}")
+
+        cases: list[dict[str, Any]] = []
+        while True:
+            response = self._session.get(url, auth=self._auth, params=params, timeout=30)
+            data = self._handle_response(response, f"get_cases project={project_id}")
+            page: list[dict[str, Any]]
+            if isinstance(data, dict) and "cases" in data:
+                page = data["cases"]
+            else:
+                page = data  # type: ignore[assignment]  # some TestRail versions return a bare list
+            cases.extend(page or [])
+
+            next_link = data.get("_links", {}).get("next") if isinstance(data, dict) else None
+            if not next_link:
+                break
+            url = f"{self._base_url}{next_link}"
+            params = {}
+        return cases
 
     def close(self) -> None:
         """Release the underlying HTTP session."""

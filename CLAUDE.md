@@ -102,7 +102,7 @@ Current test counts: 47 (vehicle API) + 71 (TestRail) + others = ~150+ total, al
 │       ├── client.py          # TestRailClient (add_results_for_cases, add_case)
 │       ├── result_mapper.py   # Behave scenario → result (status + failure-cause comment)
 │       ├── pending_store.py   # Thread-safe JSON queue (reports/testrail/pending_results.json)
-│       └── case_sync.py       # Create TestRail cases for AI-generated scenarios, tag file
+│       └── case_sync.py       # Create/link TestRail cases for a feature file or folder, tag file(s)
 │
 ├── e2e/                       # ← QA TEAM — feature files + step definitions only
 │   ├── features/
@@ -260,16 +260,21 @@ Required env vars (at push time only): `TESTRAIL_URL`, `TESTRAIL_USER`, `TESTRAI
 Scenario tagging convention: `@testrail_C448337` → links to TestRail case C448337.
 
 For AI-generated feature files (which start untagged), create the cases and tag the
-file in one reviewed step — never invent case numbers by hand:
+file in one reviewed step — never invent case numbers by hand. `--feature` takes
+either one file or a folder (syncs every `*.feature` file in it):
 
 ```bash
-python -m agent.testrail.case_sync --feature e2e/features/<file>.feature --section-id N [--dry-run]
+python -m agent.testrail.case_sync --feature e2e/features/<file_or_dir> --section-id N --project-id N [--dry-run]
 ```
 
-Case creation is manual-only (same philosophy as result pushing), idempotent
-(already-tagged scenarios are skipped), and needs `TESTRAIL_SECTION_ID` or
-`--section-id`. See docs/ai-test-generation-guide.md → "Linking generated
-scenarios to TestRail".
+Case creation is manual-only (same philosophy as result pushing) and needs
+`TESTRAIL_SECTION_ID`/`--section-id` plus `TESTRAIL_PROJECT_ID`/`--project-id`
+(multi-suite projects also need `TESTRAIL_SUITE_ID`/`--suite-id`). It's
+idempotent two ways: already-tagged scenarios are skipped, and an untagged
+scenario whose title matches an existing case in the section is linked to it
+instead of creating a duplicate — TestRail does not enforce unique case
+titles, so the project ID is required to run this check. See
+docs/ai-test-generation-guide.md → "Linking generated scenarios to TestRail".
 
 Full API surface, failure-comment behaviour, and removed-API list:
 [docs/testrail-integration-guide.md](docs/testrail-integration-guide.md).
@@ -325,6 +330,9 @@ TESTRAIL_URL=
 TESTRAIL_USER=
 TESTRAIL_API_KEY=
 TESTRAIL_RUN_ID=
+TESTRAIL_SECTION_ID=
+TESTRAIL_PROJECT_ID=
+TESTRAIL_SUITE_ID=             # multi-suite projects only
 
 # Notifications
 NOTIFY_ON_FAILURE=true

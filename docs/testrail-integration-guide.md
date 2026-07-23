@@ -39,7 +39,8 @@ Two invariants hold everywhere — do not code around them:
 | `TestRailClient.from_env()` | Construct from `TESTRAIL_URL` / `TESTRAIL_USER` / `TESTRAIL_API_KEY`; raises `TestRailConfigError` if any is missing |
 | `add_results_for_cases(run_id, results)` | Bulk-submit results — called by `!testrail push` only |
 | `add_case(section_id, title, custom_steps=None)` | Create one case — called by `case_sync` only |
-| `default_run_id()` / `default_section_id()` | Read `TESTRAIL_RUN_ID` / `TESTRAIL_SECTION_ID` env vars as ints |
+| `get_cases(project_id, section_id=None, suite_id=None)` | List existing cases (paginated transparently) — called by `case_sync`'s duplicate-case check before every `add_case` |
+| `default_run_id()` / `default_section_id()` / `default_project_id()` / `default_suite_id()` | Read `TESTRAIL_RUN_ID` / `TESTRAIL_SECTION_ID` / `TESTRAIL_PROJECT_ID` / `TESTRAIL_SUITE_ID` env vars as ints |
 
 `add_case` adapts to the project's case template automatically: it sends
 plain-text `custom_steps` first; on HTTP 400 it retries with
@@ -54,19 +55,35 @@ is released.
 
 ```bash
 # Always preview first
-python -m agent.testrail.case_sync --feature e2e/features/x.feature --section-id 42 --dry-run
-python -m agent.testrail.case_sync --feature e2e/features/x.feature --section-id 42
+python -m agent.testrail.case_sync --feature e2e/features/x.feature --section-id 42 --project-id 7 --dry-run
+python -m agent.testrail.case_sync --feature e2e/features/x.feature --section-id 42 --project-id 7
+
+# Or sync every .feature file in a folder in one command
+python -m agent.testrail.case_sync --feature e2e/features/ai_generated --section-id 42 --project-id 7
 ```
 
-Programmatic: `sync_feature_file(path, section_id, dry_run=False, client=None)`
-returns a `SyncReport` (`created` / `skipped` / `failed`, `ok` property).
-`find_scenarios(text)` and `insert_case_tags(text, {line_idx: case_id})` are
-pure helpers — no I/O, safe to reuse for tooling.
+Programmatic:
+- `sync_feature_file(path, section_id, project_id=None, suite_id=None, dry_run=False, client=None)`
+  → `SyncReport` (`created` / `linked` / `skipped` / `failed`, `ok` property).
+- `sync_feature_dir(dir_path, section_id, project_id=None, suite_id=None, dry_run=False, client=None)`
+  → `list[SyncReport]`, one per `*.feature` file found directly in the folder.
+- `find_scenarios(text)` and `insert_case_tags(text, {line_idx: case_id})` are
+  pure helpers — no I/O, safe to reuse for tooling.
 
 Rules:
 - Run it **after** reviewing the generated Gherkin, never before.
-- Re-running is idempotent — tagged scenarios are skipped.
+- Re-running is idempotent two ways: scenarios already tagged
+  `@testrail_C<id>` are skipped, and untagged scenarios whose title matches
+  an existing case in the section are **linked** to it (`get_cases`) instead
+  of creating a duplicate — TestRail does not enforce unique case titles, so
+  this check is what keeps a re-synced/renamed file, or a folder sync where
+  two files share a title, from uploading the same scenario twice.
 - On partial failure, successes are still tagged; fix the failures and re-run.
+- The feature file is only ever updated with an atomic write (temp file +
+  rename) — never a partial/corrupt file on interrupt.
+- Folder mode shares one `TestRailClient`/HTTP session and one duplicate-case
+  check across every file in filename order; one bad file is recorded on its
+  own `SyncReport` and does not stop the rest of the batch.
 
 ### `agent.testrail.result_mapper` — scenario → result
 
@@ -118,6 +135,8 @@ construction is for tests only.
 | `TESTRAIL_URL`, `TESTRAIL_USER`, `TESTRAIL_API_KEY` | client auth | case sync + push time only |
 | `TESTRAIL_RUN_ID` | default run for push | push time (or `--run-id`) |
 | `TESTRAIL_SECTION_ID` | default section for case sync | sync time (or `--section-id`) |
+| `TESTRAIL_PROJECT_ID` | duplicate-case check (`get_cases`) before every `add_case` | sync time, required unless `--dry-run` (or `--project-id`) |
+| `TESTRAIL_SUITE_ID` | narrows the duplicate-case check — only for multi-suite projects | sync time, optional (or `--suite-id`) |
 
 Never hardcode any of these; never at test-run time — running tests requires
 no TestRail access at all.
