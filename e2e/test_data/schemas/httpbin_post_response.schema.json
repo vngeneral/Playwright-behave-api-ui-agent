@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "httpbin POST echo response",
+  "type": "object",
+  "required": ["url", "json", "headers"],
+  "properties": {
+    "url": {
+      "type": "string",
+      "pattern": "/post$"
+    },
+    "json": {
+      "type": "object"
+    },
+    "headers": {
+      "type": "object",
+      "required": ["Content-Type"],
+      "properties": {
+        "Content-Type": { "const": "application/json" }
+      }
+    },
+    "origin": {
+      "type": "string",
+      "minLength": 1
+    },
+    "data": { "type": "string" },
+    "args": { "type": "object" },
+    "files": { "type": "object" },
+    "form": { "type": "object" }
+  }
+}

@@ -58,6 +58,7 @@ class TestData:
     USERS_FILE = os.path.join(_TEST_DATA, "users.json")
     FORM_DATA_FILE = os.path.join(_TEST_DATA, "form_data.json")
     API_SCENARIOS_FILE = os.path.join(_TEST_DATA, "api_scenarios.json")
+    SCHEMAS_DIR = os.path.join(_TEST_DATA, "schemas")
 
 
 # ---------------------------------------------------------------------------

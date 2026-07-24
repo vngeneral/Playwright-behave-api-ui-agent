@@ -15,10 +15,10 @@ from __future__ import annotations
 import json
 
 import allure
-from behave import given, register_type, step, then, when
+from behave import given, register_type, then, when
 
 from utils.api.vehicle_client import VehicleAPIClient
-from utils.logger import log_failure, log_info_emoji
+from utils.logger import log_info_emoji
 from utils.misc import load_config
 
 
@@ -43,6 +43,7 @@ register_type(Quoted=_parse_quoted)
 # ---------------------------------------------------------------------------
 
 @given("the Vehicle API client is initialised")
+@given("Vehicle API client is initialized")
 def step_init_vehicle_client(context):
     """
     Build VehicleAPIClient from config.yaml.
@@ -175,8 +176,8 @@ def step_assert_transaction_ref(context):
     _require_response(context)
     try:
         body = context.vehicle_response.json()
-    except Exception:
-        raise AssertionError("Cannot check transaction reference — response is not JSON")
+    except Exception as exc:
+        raise AssertionError("Cannot check transaction reference — response is not JSON") from exc
 
     # Common patterns: transactionId, transaction_id, referenceId
     keys_to_check = {"transactionId", "transaction_id", "referenceId", "reference"}
@@ -213,6 +214,9 @@ def _require_response(context) -> None:
 def _attach_response(context, label: str) -> None:
     """Attach the response to Allure if available; always log it."""
     resp = context.vehicle_response
+    # Also expose as api_response so the generic body/field/schema assertion
+    # steps in api_steps.py work on vehicle responses too.
+    context.api_response = resp
     log_info_emoji(
         "✅" if resp.ok else "⚠️",
         f"[{label}] HTTP {resp.status_code}  {resp.elapsed_ms:.0f}ms",

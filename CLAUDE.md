@@ -206,6 +206,25 @@ import ollama  # ← deleted from requirements
 
 Step definitions only call `utils/` methods and set `context.*` attributes. No HTTP, no SQL, no LLM calls directly in step files.
 
+### API test data and assertions — use the shared utilities
+
+- **Payloads** are built from templates with `{{token}}` placeholders via
+  `e2e/utils/api/payload_builder.py` (`build_payload`). Tokens: `{{uuid}}`,
+  `{{now}}`/`{{now:+2d}}`, `{{random_vin}}` (valid ISO-3779 check digit),
+  `{{random_int:MIN:MAX}}`, `{{env:VAR}}`, `{{saved:key}}` (chaining). Never
+  hardcode fresh-per-run values in payload dicts.
+- **Body assertions** go through `e2e/utils/api/response_matcher.py`
+  (`assert_json_matches`) — it collects *all* mismatches, supports
+  `<<matcher>>` tokens (`<<uuid>>`, `<<iso8601>>`, `<<regex:…>>`,
+  `<<any_of:a|b>>`, …) for dynamic response fields, and `ignore_paths`
+  wildcards (`headers.*`, `vinList[*].createdAt`, `**.traceId`) to skip
+  server-generated values. JSON Schema files live in `e2e/test_data/schemas/`
+  (`validate_schema("name")` → `<name>.schema.json`).
+- **Generic Gherkin steps** for both are in `e2e/steps/api_steps.py`
+  (`I send a POST request to "…" with payload`, `the response body should
+  match`, `I save the response field "…" as "…"`) and also work after vehicle
+  API steps (they share `context.api_response`).
+
 ---
 
 ## AI provider configuration
